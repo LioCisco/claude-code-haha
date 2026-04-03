@@ -54,5 +54,7 @@ export function initBundledSkills(): void {
     const { registerRunSkillGeneratorSkill } = require('./runSkillGenerator.js')
     registerRunSkillGeneratorSkill()
   }
+  // 社交媒体发布技能 - 一键生成文案/图片/视频并自动发布
+  require('./socialMedia.js').registerSocialMediaSkill()
   /* eslint-enable @typescript-eslint/no-require-imports */
 }

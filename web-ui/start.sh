@@ -1,10 +1,10 @@
 #!/bin/bash
 
-# Accio Work Web UI 启动脚本
+# Kane Work Web UI 启动脚本
 
 set -e
 
-echo "🚀 启动 Accio Work Web UI..."
+echo "🚀 启动 Kane Work Web UI..."
 echo ""
 
 # 检查bun是否安装

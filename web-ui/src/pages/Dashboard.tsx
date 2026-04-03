@@ -63,7 +63,7 @@ export default function Dashboard() {
         <div className="relative">
           <div className="flex items-center gap-2 mb-2">
             <Sparkles className="w-5 h-5" />
-            <span className="text-accio-100 text-sm font-medium">Accio Work</span>
+            <span className="text-accio-100 text-sm font-medium">Kane Work</span>
           </div>
           <h1 className="text-3xl font-bold mb-2">欢迎回来，商家用户</h1>
           <p className="text-accio-100 max-w-xl">

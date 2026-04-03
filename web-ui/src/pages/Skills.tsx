@@ -21,6 +21,7 @@ import {
   Shield,
   Database,
   TrendingUp,
+  Loader2,
 } from 'lucide-react'
 import { cn } from '@/lib/utils'
 
@@ -99,7 +100,7 @@ const skills: Skill[] = [
   {
     id: 'social-post',
     name: '社媒内容发布',
-    description: '自动生成并发布Instagram、X、Reddit等社交平台内容',
+    description: '自动生成并发布小红书、微博、抖音、公众号、Twitter等社交平台内容',
     icon: MessageSquare,
     category: 'marketing',
     status: 'active',
@@ -158,10 +159,31 @@ const skills: Skill[] = [
   },
 ]
 
+const platforms = [
+  { id: 'xiaohongshu', name: '小红书' },
+  { id: 'weibo', name: '微博' },
+  { id: 'douyin', name: '抖音' },
+  { id: 'wechat', name: '微信公众号' },
+  { id: 'twitter', name: 'Twitter/X' },
+  { id: 'linkedin', name: 'LinkedIn' },
+]
+
+const styles = ['专业', '幽默', '文艺', '促销', '故事']
+
 export default function Skills() {
   const [activeCategory, setActiveCategory] = useState('all')
   const [searchQuery, setSearchQuery] = useState('')
   const [selectedSkill, setSelectedSkill] = useState<Skill | null>(null)
+  const [isRunning, setIsRunning] = useState(false)
+  const [runResult, setRunResult] = useState<unknown>(null)
+  const [runError, setRunError] = useState<string | null>(null)
+
+  // Social post test form state
+  const [socialPlatform, setSocialPlatform] = useState('xiaohongshu')
+  const [socialTopic, setSocialTopic] = useState('')
+  const [socialStyle, setSocialStyle] = useState('专业')
+  const [socialImage, setSocialImage] = useState(false)
+  const [socialVideo, setSocialVideo] = useState(false)
 
   const filteredSkills = skills.filter((skill) => {
     const matchesCategory = activeCategory === 'all' || skill.category === activeCategory
@@ -172,6 +194,51 @@ export default function Skills() {
   })
 
   const activeSkills = skills.filter((s) => s.status === 'active').length
+
+  const handleRunSkill = async () => {
+    if (!selectedSkill) return
+    setIsRunning(true)
+    setRunResult(null)
+    setRunError(null)
+
+    try {
+      const body: { params: Record<string, unknown> } = { params: {} }
+      if (selectedSkill.id === 'social-post') {
+        body.params = {
+          platform: socialPlatform,
+          topic: socialTopic || '自媒体运营',
+          style: socialStyle,
+          needImage: socialImage,
+          needVideo: socialVideo,
+        }
+      }
+
+      const res = await fetch(`http://localhost:8080/api/skills/${selectedSkill.id}/execute`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(body),
+      })
+      const data = await res.json()
+      if (!data.success) {
+        setRunError(data.message || '执行失败')
+      } else {
+        setRunResult(data.result)
+      }
+    } catch (err) {
+      setRunError(err instanceof Error ? err.message : '网络请求失败')
+    } finally {
+      setIsRunning(false)
+    }
+  }
+
+  const closeModal = () => {
+    setSelectedSkill(null)
+    setRunResult(null)
+    setRunError(null)
+    setSocialTopic('')
+    setSocialImage(false)
+    setSocialVideo(false)
+  }
 
   return (
     <div className="space-y-6">
@@ -277,8 +344,8 @@ export default function Skills() {
 
       {/* Skill Detail Modal */}
       {selectedSkill && (
-        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50">
-          <div className="bg-white rounded-2xl w-full max-w-lg p-6">
+        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
+          <div className="bg-white rounded-2xl w-full max-w-2xl max-h-[90vh] overflow-y-auto p-6">
             <div className="flex items-start gap-4 mb-6">
               <div
                 className={cn(
@@ -300,7 +367,7 @@ export default function Skills() {
                 </div>
                 <p className="text-gray-500">{selectedSkill.description}</p>
               </div>
-              <button onClick={() => setSelectedSkill(null)} className="text-gray-400 hover:text-gray-600">
+              <button onClick={closeModal} className="text-gray-400 hover:text-gray-600">
                 ✕
               </button>
             </div>
@@ -323,6 +390,93 @@ export default function Skills() {
                   </div>
                 </div>
               </div>
+
+              {selectedSkill.id === 'social-post' && (
+                <div className="border border-accio-200 bg-accio-50/50 rounded-lg p-4">
+                  <h4 className="text-sm font-medium text-accio-800 mb-3 flex items-center gap-2">
+                    <MessageSquare className="w-4 h-4" />
+                    测试发布自媒体内容
+                  </h4>
+                  <div className="grid grid-cols-2 gap-4">
+                    <div className="col-span-2">
+                      <label className="block text-xs text-gray-600 mb-1">主题 / 内容描述</label>
+                      <input
+                        type="text"
+                        value={socialTopic}
+                        onChange={(e) => setSocialTopic(e.target.value)}
+                        placeholder="例如：夏季护肤技巧"
+                        className="w-full px-3 py-2 border border-gray-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-accio-500"
+                      />
+                    </div>
+                    <div>
+                      <label className="block text-xs text-gray-600 mb-1">发布平台</label>
+                      <select
+                        value={socialPlatform}
+                        onChange={(e) => setSocialPlatform(e.target.value)}
+                        className="w-full px-3 py-2 border border-gray-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-accio-500"
+                      >
+                        {platforms.map((p) => (
+                          <option key={p.id} value={p.id}>
+                            {p.name}
+                          </option>
+                        ))}
+                      </select>
+                    </div>
+                    <div>
+                      <label className="block text-xs text-gray-600 mb-1">内容风格</label>
+                      <select
+                        value={socialStyle}
+                        onChange={(e) => setSocialStyle(e.target.value)}
+                        className="w-full px-3 py-2 border border-gray-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-accio-500"
+                      >
+                        {styles.map((s) => (
+                          <option key={s} value={s}>
+                            {s}
+                          </option>
+                        ))}
+                      </select>
+                    </div>
+                    <label className="flex items-center gap-2 text-sm text-gray-700 cursor-pointer">
+                      <input
+                        type="checkbox"
+                        checked={socialImage}
+                        onChange={(e) => setSocialImage(e.target.checked)}
+                        className="w-4 h-4 text-accio-600 rounded"
+                      />
+                      生成配图
+                    </label>
+                    <label className="flex items-center gap-2 text-sm text-gray-700 cursor-pointer">
+                      <input
+                        type="checkbox"
+                        checked={socialVideo}
+                        onChange={(e) => setSocialVideo(e.target.checked)}
+                        className="w-4 h-4 text-accio-600 rounded"
+                      />
+                      生成视频
+                    </label>
+                  </div>
+                </div>
+              )}
+
+              {(runResult || runError) && (
+                <div
+                  className={cn(
+                    'rounded-lg p-4 max-h-80 overflow-y-auto',
+                    runError ? 'bg-red-50 border border-red-200' : 'bg-gray-50 border border-gray-200'
+                  )}
+                >
+                  <h4 className={cn('text-sm font-medium mb-2', runError ? 'text-red-700' : 'text-gray-700')}>
+                    {runError ? '执行失败' : '执行结果'}
+                  </h4>
+                  {runError ? (
+                    <p className="text-sm text-red-600">{runError}</p>
+                  ) : (
+                    <pre className="text-xs text-gray-700 whitespace-pre-wrap">
+                      {JSON.stringify(runResult, null, 2)}
+                    </pre>
+                  )}
+                </div>
+              )}
 
               <div>
                 <h4 className="text-sm font-medium text-gray-700 mb-2">配置参数</h4>
@@ -350,8 +504,12 @@ export default function Skills() {
                 <Settings className="w-4 h-4" />
                 高级设置
               </button>
-              <button className="flex items-center gap-2 px-4 py-2 bg-accio-600 hover:bg-accio-700 text-white rounded-lg">
-                <Play className="w-4 h-4" />
+              <button
+                onClick={handleRunSkill}
+                disabled={isRunning || selectedSkill.status !== 'active'}
+                className="flex items-center gap-2 px-4 py-2 bg-accio-600 hover:bg-accio-700 disabled:opacity-50 disabled:cursor-not-allowed text-white rounded-lg"
+              >
+                {isRunning ? <Loader2 className="w-4 h-4 animate-spin" /> : <Play className="w-4 h-4" />}
                 立即运行
               </button>
             </div>

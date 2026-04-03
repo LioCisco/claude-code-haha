@@ -11,7 +11,7 @@ interface ChatState {
   tasks: Task[]
 
   // Actions
-  addMessage: (message: Omit<Message, 'id' | 'timestamp'>) => void
+  addMessage: (message: Omit<Message, 'id' | 'timestamp'> & { id?: string }) => void
   updateMessage: (id: string, updates: Partial<Message>) => void
   clearMessages: () => void
   setTyping: (typing: boolean) => void
@@ -81,7 +81,7 @@ const defaultAgents: Agent[] = [
 
 export const useChatStore = create<ChatState>()(
   persist(
-    (set, get) => ({
+    (set, _get) => ({
       messages: [],
       agents: defaultAgents,
       activeAgents: [],
@@ -92,7 +92,7 @@ export const useChatStore = create<ChatState>()(
       addMessage: (message) => {
         const newMessage: Message = {
           ...message,
-          id: Math.random().toString(36).substring(2, 15),
+          id: message.id || Math.random().toString(36).substring(2, 15),
           timestamp: new Date(),
         }
         set((state) => ({

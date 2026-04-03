@@ -16,7 +16,7 @@ import {
 const steps = [
   {
     id: 'welcome',
-    title: '欢迎来到 Accio Work',
+    title: '欢迎来到 Kane Work',
     description: '您的AI电商智能工作台',
   },
   {
@@ -118,7 +118,7 @@ export default function Onboarding() {
                 <Sparkles className="w-10 h-10 text-white" />
               </div>
               <h1 className="text-3xl font-bold text-gray-900 mb-3">
-                欢迎来到 Accio Work
+                欢迎来到 Kane Work
               </h1>
               <p className="text-lg text-gray-500 max-w-md mx-auto mb-8">
                 您的AI电商智能工作台。一人+AI=一整个跨境团队，30分钟零基础开店。
@@ -152,7 +152,7 @@ export default function Onboarding() {
                   探索核心功能
                 </h2>
                 <p className="text-gray-500">
-                  Accio Work 提供全方位的AI电商解决方案
+                  Kane Work 提供全方位的AI电商解决方案
                 </p>
               </div>
 

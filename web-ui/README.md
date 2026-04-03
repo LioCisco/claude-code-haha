@@ -1,6 +1,6 @@
-# Accio Work - AI电商智能工作台
+# Kane Work - AI电商智能工作台
 
-基于阿里 Accio Work 界面风格打造的 AI 电商 Web UI。
+基于阿里 Kane Work 界面风格打造的 AI 电商 Web UI。
 
 ## 功能特性
 

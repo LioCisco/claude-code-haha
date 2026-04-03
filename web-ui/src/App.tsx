@@ -8,6 +8,7 @@ import StoreBuilder from './pages/StoreBuilder'
 import Analytics from './pages/Analytics'
 import Settings from './pages/Settings'
 import Onboarding from './pages/Onboarding'
+import ScheduledTasks from './pages/ScheduledTasks'
 
 function App() {
   return (
@@ -20,6 +21,7 @@ function App() {
         <Route path="skills" element={<Skills />} />
         <Route path="store-builder" element={<StoreBuilder />} />
         <Route path="analytics" element={<Analytics />} />
+        <Route path="scheduled-tasks" element={<ScheduledTasks />} />
         <Route path="settings" element={<Settings />} />
       </Route>
     </Routes>

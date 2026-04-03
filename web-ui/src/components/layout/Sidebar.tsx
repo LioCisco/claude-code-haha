@@ -9,6 +9,7 @@ import {
   Settings,
   Sparkles,
   Zap,
+  Clock,
 } from 'lucide-react'
 import { cn } from '@/lib/utils'
 
@@ -19,6 +20,7 @@ const navigation = [
   { name: '技能库', to: '/skills', icon: Wrench },
   { name: '店铺搭建', to: '/store-builder', icon: Store },
   { name: '数据分析', to: '/analytics', icon: BarChart3 },
+  { name: '定时任务', to: '/scheduled-tasks', icon: Clock },
 ]
 
 export default function Sidebar() {
@@ -35,7 +37,7 @@ export default function Sidebar() {
           </div>
         </div>
         <div>
-          <h1 className="text-lg font-bold text-gray-900">Accio Work</h1>
+          <h1 className="text-lg font-bold text-gray-900">Kane Work</h1>
           <p className="text-xs text-gray-500">AI 电商智能体</p>
         </div>
       </div>

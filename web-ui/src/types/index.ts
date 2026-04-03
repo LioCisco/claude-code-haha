@@ -98,3 +98,36 @@ export interface User {
   plan: 'free' | 'pro' | 'enterprise'
   tokens: number
 }
+
+// Scheduled Tasks
+export type ScheduleType = 'once' | 'daily' | 'interval' | 'cron'
+
+export interface ScheduleConfig {
+  type: ScheduleType
+  value: string
+}
+
+export interface TaskResult {
+  id: string
+  timestamp: Date
+  status: 'success' | 'error' | 'running'
+  output?: string
+  error?: string
+  duration?: number
+}
+
+export interface ScheduledTask {
+  id: string
+  name: string
+  agentId: string
+  agentName?: string
+  sessionId?: string
+  prompt: string
+  schedule: ScheduleConfig
+  enabled: boolean
+  createdAt: Date
+  updatedAt: Date
+  lastRun?: Date
+  nextRun?: Date
+  results: TaskResult[]
+}
