@@ -41,11 +41,7 @@ const app = new Elysia()
       const baseURL = process.env.ANTHROPIC_BASE_URL
       const model = process.env.ANTHROPIC_MODEL || 'kimi-k2.5'
 
-      if (!apiKey) {
-        ws.send(JSON.stringify({ type: 'error', message: 'AI 服务未配置' }))
-        return
-      }
-
+      // Create session even without API key to avoid "Session not found" errors
       const session = new ClaudeSession({
         apiKey,
         baseURL,
@@ -56,6 +52,12 @@ const app = new Elysia()
       })
 
       sessions.set(ws.id, session)
+      
+      if (!apiKey) {
+        ws.send(JSON.stringify({ type: 'error', message: 'AI 服务未配置' }))
+        return
+      }
+
       ws.send(JSON.stringify({ type: 'connected', message: 'Connected to Kane Work' }))
     },
     async message(ws, message) {
