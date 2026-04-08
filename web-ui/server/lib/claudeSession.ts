@@ -304,19 +304,22 @@ export class ClaudeSession {
       for (let turn = 0; turn < this.maxTurns; turn++) {
         console.log(`[ClaudeSession] Turn ${turn + 1}, calling API...`)
 
-        const response = await this.anthropic.messages.create({
-          model: this.model,
-          max_tokens: 4096,
-          system: systemPrompt,
-          messages: this.messages,
-          tools: TOOL_DEFINITIONS,
-        }).catch((err) => {
+        let response: Anthropic.Messages.Message
+        try {
+          response = await this.anthropic.messages.create({
+            model: this.model,
+            max_tokens: 4096,
+            system: systemPrompt,
+            messages: this.messages,
+            tools: TOOL_DEFINITIONS,
+          })
+        } catch (err: any) {
           console.error('[ClaudeSession] API Error:', err)
           // Try to extract detailed error info
           const errorMessage = err?.error?.message || err?.message || String(err)
           const errorType = err?.error?.type || err?.type || 'unknown'
           throw new Error(`API Error (${errorType}): ${errorMessage}`)
-        })
+        }
 
         console.log(`[ClaudeSession] API response received, stop_reason: ${response.stop_reason}`)
 
