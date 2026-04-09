@@ -1,8 +1,18 @@
-import { Bell, Search, Plus, Command } from 'lucide-react'
+import { Bell, Search, Plus, LogOut, User } from 'lucide-react'
 import { useState } from 'react'
+import { useNavigate } from 'react-router-dom'
+import { useAuthStore } from '@/store/useAuthStore'
 
 export default function Header() {
   const [showCommandPalette, setShowCommandPalette] = useState(false)
+  const [showUserMenu, setShowUserMenu] = useState(false)
+  const { user, logout } = useAuthStore()
+  const navigate = useNavigate()
+
+  const handleLogout = () => {
+    logout()
+    navigate('/login')
+  }
 
   return (
     <header className="h-16 bg-white border-b border-gray-200 flex items-center justify-between px-6">
@@ -35,14 +45,52 @@ export default function Header() {
         </button>
 
         {/* User Avatar */}
-        <div className="flex items-center gap-3 pl-4 border-l border-gray-200">
-          <div className="text-right hidden sm:block">
-            <p className="text-sm font-medium text-gray-900">商家用户</p>
-            <p className="text-xs text-gray-500">Pro Plan</p>
-          </div>
-          <div className="w-9 h-9 bg-gradient-to-br from-ali-400 to-ali-600 rounded-full flex items-center justify-center text-white font-medium text-sm">
-            商
-          </div>
+        <div className="relative">
+          <button
+            onClick={() => setShowUserMenu(!showUserMenu)}
+            className="flex items-center gap-3 pl-4 border-l border-gray-200 hover:bg-gray-50 rounded-lg py-1 pr-1 transition-colors"
+          >
+            <div className="text-right hidden sm:block">
+              <p className="text-sm font-medium text-gray-900">{user?.username || '未登录'}</p>
+              <p className="text-xs text-gray-500">{user?.plan || 'Free'}</p>
+            </div>
+            <div className="w-9 h-9 bg-gradient-to-br from-ali-400 to-ali-600 rounded-full flex items-center justify-center text-white font-medium text-sm">
+              {user?.username ? user.username.charAt(0).toUpperCase() : <User className="w-4 h-4" />}
+            </div>
+          </button>
+
+          {/* User Menu Dropdown */}
+          {showUserMenu && (
+            <>
+              <div
+                className="fixed inset-0 z-10"
+                onClick={() => setShowUserMenu(false)}
+              />
+              <div className="absolute right-0 top-full mt-2 w-48 bg-white rounded-xl shadow-lg border border-gray-200 py-1 z-20">
+                <button
+                  onClick={() => {
+                    setShowUserMenu(false)
+                    navigate('/settings')
+                  }}
+                  className="w-full px-4 py-2 text-left text-sm text-gray-700 hover:bg-gray-50 flex items-center gap-2"
+                >
+                  <User className="w-4 h-4" />
+                  个人设置
+                </button>
+                <div className="my-1 border-t border-gray-100" />
+                <button
+                  onClick={() => {
+                    setShowUserMenu(false)
+                    handleLogout()
+                  }}
+                  className="w-full px-4 py-2 text-left text-sm text-red-600 hover:bg-red-50 flex items-center gap-2"
+                >
+                  <LogOut className="w-4 h-4" />
+                  退出登录
+                </button>
+              </div>
+            </>
+          )}
         </div>
       </div>
     </header>

@@ -1,6 +1,7 @@
 import { create } from 'zustand'
 import { persist } from 'zustand/middleware'
 import type { Message, Agent, Task } from '@/types'
+import { getAgents } from '@/api/agents'
 
 interface ChatState {
   messages: Message[]
@@ -9,6 +10,11 @@ interface ChatState {
   isTyping: boolean
   currentAgent: Agent | null
   tasks: Task[]
+  // Session management
+  sessions: { id: string; title: string; updatedAt: string; agentId?: string; agentName?: string; agentAvatar?: string }[]
+  currentSessionId: string | null
+  isLoadingAgents: boolean
+  agentsError: string | null
 
   // Actions
   addMessage: (message: Omit<Message, 'id' | 'timestamp'> & { id?: string }) => void
@@ -19,75 +25,31 @@ interface ChatState {
   toggleAgent: (agentId: string) => void
   addTask: (task: Omit<Task, 'id' | 'createdAt' | 'updatedAt'>) => void
   updateTask: (id: string, updates: Partial<Task>) => void
+  // Session actions
+  setSessions: (sessions: ChatState['sessions']) => void
+  setCurrentSessionId: (id: string | null) => void
+  addSession: (session: { id: string; title: string; updatedAt: string; agentId?: string; agentName?: string; agentAvatar?: string }) => void
+  removeSession: (id: string) => void
+  updateSessionTitle: (id: string, title: string) => void
+  // Agents actions
+  loadAgents: () => Promise<void>
+  setAgents: (agents: Agent[]) => void
 }
-
-const defaultAgents: Agent[] = [
-  {
-    id: 'product-researcher',
-    name: '选品专员',
-    role: '爆款选品总监',
-    avatar: '🔍',
-    description: '擅长市场趋势分析、竞品调研、1688以图搜货',
-    skills: ['market-research', 'product-sourcing', 'trend-analysis'],
-    status: 'idle',
-    model: 'claude-sonnet-4-6',
-    color: '#22c55e',
-  },
-  {
-    id: 'content-creator',
-    name: '内容专员',
-    role: '内容生成专员',
-    avatar: '✍️',
-    description: '自动生成商品描述、AI模特图、营销文案',
-    skills: ['copywriting', 'image-generation', 'seo-optimization'],
-    status: 'idle',
-    model: 'claude-sonnet-4-6',
-    color: '#f97316',
-  },
-  {
-    id: 'store-manager',
-    name: '运营专员',
-    role: '店铺运营总监',
-    avatar: '🏪',
-    description: 'Shopify店铺搭建、SEO优化、数据分析',
-    skills: ['shopify', 'seo', 'analytics', 'listing-optimization'],
-    status: 'idle',
-    model: 'claude-sonnet-4-6',
-    color: '#3b82f6',
-  },
-  {
-    id: 'procurement',
-    name: '采购专员',
-    role: '采购谈判专员',
-    avatar: '🤝',
-    description: '自动发起RFQ、供应商谈判、订单跟进',
-    skills: ['rfq', 'negotiation', 'supplier-management'],
-    status: 'idle',
-    model: 'claude-sonnet-4-6',
-    color: '#8b5cf6',
-  },
-  {
-    id: 'marketing',
-    name: '营销专员',
-    role: '社媒营销总监',
-    avatar: '📢',
-    description: 'Instagram/X/Reddit内容发布、广告投放',
-    skills: ['social-media', 'ads', 'content-marketing'],
-    status: 'idle',
-    model: 'claude-sonnet-4-6',
-    color: '#ec4899',
-  },
-]
 
 export const useChatStore = create<ChatState>()(
   persist(
     (set, _get) => ({
       messages: [],
-      agents: defaultAgents,
+      agents: [],
       activeAgents: [],
       isTyping: false,
       currentAgent: null,
       tasks: [],
+      // Session management
+      sessions: [],
+      currentSessionId: null,
+      isLoadingAgents: false,
+      agentsError: null,
 
       addMessage: (message) => {
         const newMessage: Message = {
@@ -143,9 +105,61 @@ export const useChatStore = create<ChatState>()(
           ),
         }))
       },
+
+      // Session actions
+      setSessions: (sessions) => set({ sessions }),
+
+      setCurrentSessionId: (id) => set({ currentSessionId: id }),
+
+      addSession: (session) => {
+        set((state) => ({
+          sessions: [session, ...state.sessions.filter(s => s.id !== session.id)],
+        }))
+      },
+
+      removeSession: (id) => {
+        set((state) => ({
+          sessions: state.sessions.filter(s => s.id !== id),
+          currentSessionId: state.currentSessionId === id ? null : state.currentSessionId,
+        }))
+      },
+
+      updateSessionTitle: (id, title) => {
+        set((state) => ({
+          sessions: state.sessions.map(s =>
+            s.id === id ? { ...s, title } : s
+          ),
+        }))
+      },
+
+      // Agents actions
+      loadAgents: async () => {
+        set({ isLoadingAgents: true, agentsError: null })
+        try {
+          const agents = await getAgents()
+          set({ agents, isLoadingAgents: false })
+        } catch (err) {
+          set({
+            agentsError: (err as Error).message,
+            isLoadingAgents: false,
+          })
+        }
+      },
+
+      setAgents: (agents) => set({ agents }),
     }),
     {
       name: 'accio-chat-store',
+      partialize: (state) => ({
+        // Don't persist sessions - always load from server
+        messages: state.messages,
+        activeAgents: state.activeAgents,
+        isTyping: state.isTyping,
+        currentAgent: state.currentAgent,
+        tasks: state.tasks,
+        currentSessionId: state.currentSessionId,
+        // Don't persist agents - always load from server
+      }),
     }
   )
 )

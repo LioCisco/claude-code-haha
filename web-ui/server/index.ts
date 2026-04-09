@@ -2,17 +2,35 @@ import { Elysia } from 'elysia'
 import { cors } from '@elysiajs/cors'
 import { swagger } from '@elysiajs/swagger'
 import { staticPlugin } from '@elysiajs/static'
+import crypto from 'crypto'
 import { chatRoutes } from './routes/chat'
 import { agentRoutes } from './routes/agents'
 import { skillRoutes } from './routes/skills'
 import { storeRoutes } from './routes/store'
 import { analyticsRoutes } from './routes/analytics'
 import { scheduledTaskRoutes } from './routes/scheduledTasks'
-import { chatWithAI, agentSystemPrompts } from './lib/ai'
+import { authRoutes } from './routes/auth'
+import { authMiddleware } from './middleware/auth'
+import { claudeCodeSkillsRoutes } from './routes/claudeCodeSkills'
+import { settingsRoutes } from './routes/settings'
+import { chatWithAI, getAgentSystemPrompt } from './lib/ai'
 import { ClaudeSession, type ChatEvent } from './lib/claudeSession'
+import { initDatabase, getSessionMessages, createSession, checkDatabaseHealth, getUserSessions, updateSessionTitle, softDeleteSession } from './db'
 
 // Map ws.id -> ClaudeSession
 const sessions = new Map<string, ClaudeSession>()
+
+// Database configuration
+const DB_ENABLED = true
+
+// Initialize database on startup
+try {
+  await initDatabase()
+  console.log('[Server] Database initialized successfully')
+} catch (err) {
+  console.error('[Server] Database initialization failed:', err)
+  console.log('[Server] Running without database persistence')
+}
 
 const app = new Elysia()
   .use(cors())
@@ -22,43 +40,167 @@ const app = new Elysia()
     assets: '../dist'
   }))
 
-  // Health check
-  .get('/api/health', () => ({ status: 'ok', timestamp: new Date().toISOString() }))
+  // Health check with database status
+  .get('/api/health', async () => {
+    const dbHealthy = await checkDatabaseHealth()
+    return {
+      status: 'ok',
+      timestamp: new Date().toISOString(),
+      database: dbHealthy ? 'connected' : 'disconnected'
+    }
+  })
+
+  // Get chat history for a session
+  .get('/api/chat/history/:sessionId', async ({ params }) => {
+    if (!DB_ENABLED) {
+      return { messages: [] }
+    }
+    try {
+      const messages = await getSessionMessages(params.sessionId, 100)
+      return { messages }
+    } catch (err) {
+      return { error: 'Failed to fetch history', messages: [] }
+    }
+  })
+
+  // Get all chat sessions
+  .get('/api/chat/sessions', async ({ query }) => {
+    if (!DB_ENABLED) {
+      return { sessions: [] }
+    }
+    try {
+      const { userId, limit } = query
+      const sessions = await getUserSessions(
+        userId as string | undefined,
+        limit ? parseInt(limit as string) : 50
+      )
+      return { sessions }
+    } catch (err) {
+      console.error('Failed to fetch sessions:', err)
+      return { error: 'Failed to fetch sessions', sessions: [] }
+    }
+  })
+
+  // Create new chat session
+  .post('/api/chat/sessions', async ({ body }) => {
+    if (!DB_ENABLED) {
+      return { error: 'Database not enabled' }
+    }
+    try {
+      const { userId, title, agentId, agentName, agentAvatar } = body as any
+      const sessionId = crypto.randomUUID()
+      await createSession(sessionId, {
+        userId,
+        title: title || '新对话',
+        agentId,
+        agentName,
+        agentAvatar
+      })
+      return { success: true, sessionId, title: title || '新对话', agentId, agentName, agentAvatar }
+    } catch (err) {
+      console.error('Failed to create session:', err)
+      return { error: 'Failed to create session' }
+    }
+  })
+
+  // Update session title
+  .put('/api/chat/sessions/:sessionId', async ({ params, body }) => {
+    if (!DB_ENABLED) {
+      return { error: 'Database not enabled' }
+    }
+    try {
+      const { title } = body as any
+      await updateSessionTitle(params.sessionId, title)
+      return { success: true }
+    } catch (err) {
+      return { error: 'Failed to update session' }
+    }
+  })
+
+  // Delete session
+  .delete('/api/chat/sessions/:sessionId', async ({ params }) => {
+    if (!DB_ENABLED) {
+      return { error: 'Database not enabled' }
+    }
+    try {
+      await softDeleteSession(params.sessionId)
+      return { success: true }
+    } catch (err) {
+      return { error: 'Failed to delete session' }
+    }
+  })
+
+  // Auth middleware (applied to all routes below)
+  .use(authMiddleware)
 
   // API Routes
+  .use(authRoutes)
   .use(chatRoutes)
   .use(agentRoutes)
   .use(skillRoutes)
   .use(storeRoutes)
   .use(analyticsRoutes)
   .use(scheduledTaskRoutes)
+  .use(claudeCodeSkillsRoutes)
+  .use(settingsRoutes)
 
   // WebSocket for real-time chat with full Claude Code capabilities
   .ws('/ws/chat', {
-    open(ws) {
+    async open(ws) {
       console.log('[WebSocket] Connection opened:', ws.id)
       const apiKey = process.env.ANTHROPIC_AUTH_TOKEN || process.env.ANTHROPIC_API_KEY
       const baseURL = process.env.ANTHROPIC_BASE_URL
       const model = process.env.ANTHROPIC_MODEL || 'kimi-k2.5'
 
-      // Create session even without API key to avoid "Session not found" errors
+      // Use client-provided sessionId if available, otherwise use ws.id
+      const querySessionId = ws.data.query?.sessionId
+      const sessionId = typeof querySessionId === 'string' && querySessionId
+        ? querySessionId
+        : ws.id
+      console.log('[WebSocket] Using sessionId:', sessionId, '(from query:', !!querySessionId, ')')
+
+      // Create session in database if not exists
+      if (DB_ENABLED) {
+        try {
+          const existingSession = await getSessionMessages(sessionId, 1)
+          if (existingSession.length === 0) {
+            await createSession(sessionId, {
+              title: `会话 ${new Date().toLocaleString('zh-CN')}`,
+            })
+            console.log(`[WebSocket] Created new session in DB: ${sessionId}`)
+          } else {
+            console.log(`[WebSocket] Existing session found: ${sessionId}`)
+          }
+        } catch (err) {
+          console.error('[WebSocket] Failed to create/verify session in DB:', err)
+        }
+      }
+
+      // Create ClaudeSession with database support
       const session = new ClaudeSession({
-        apiKey,
+        apiKey: apiKey || '',
         baseURL,
         model,
+        sessionId,
+        dbEnabled: DB_ENABLED,
         async onEvent(event: ChatEvent) {
           ws.send(JSON.stringify(event))
         },
       })
 
+      // Load history from database
+      if (DB_ENABLED) {
+        await session.loadHistoryFromDB()
+      }
+
       sessions.set(ws.id, session)
-      
+
       if (!apiKey) {
         ws.send(JSON.stringify({ type: 'error', message: 'AI 服务未配置' }))
         return
       }
 
-      ws.send(JSON.stringify({ type: 'connected', message: 'Connected to Kane Work' }))
+      ws.send(JSON.stringify({ type: 'connected', message: 'Connected to Kane Work', sessionId }))
     },
     async message(ws, message) {
       console.log('[WebSocket] Raw message received:', typeof message, message)
@@ -89,12 +231,18 @@ const app = new Elysia()
 
       if (data.type === 'user_message') {
         console.log('[WebSocket] Processing user_message:', (data.content as string)?.slice(0, 50))
-        const systemPrompt = data.agentId
-          ? agentSystemPrompts[data.agentId as string] || agentSystemPrompts.default
-          : agentSystemPrompts.default
+
+        // Get system prompt dynamically from database
+        const systemPrompt = await getAgentSystemPrompt(data.agentId as string | undefined)
+
+        const agentInfo = {
+          agentId: data.agentId as string | undefined,
+          agentName: data.agentName as string | undefined,
+          agentAvatar: data.agentAvatar as string | undefined,
+        }
 
         try {
-          await session.submitUserMessage(data.content as string, systemPrompt)
+          await session.submitUserMessage(data.content as string, systemPrompt, agentInfo)
           console.log('[WebSocket] submitUserMessage completed')
         } catch (err) {
           console.error('[WebSocket] submitUserMessage error:', err)
@@ -113,6 +261,23 @@ const app = new Elysia()
         return
       }
 
+      if (data.type === 'load_history') {
+        // Send history to client
+        if (DB_ENABLED) {
+          try {
+            const sessionId = session.getSessionId()
+            console.log('[WebSocket] Loading history for session:', sessionId)
+            const messages = await getSessionMessages(sessionId, 100)
+            console.log('[WebSocket] Sending', messages.length, 'messages to client')
+            ws.send(JSON.stringify({ type: 'history_loaded', messages }))
+          } catch (err) {
+            console.error('[WebSocket] Failed to load history:', err)
+            ws.send(JSON.stringify({ type: 'error', message: 'Failed to load history' }))
+          }
+        }
+        return
+      }
+
       // Fallback echo for unhandled types
       ws.send(JSON.stringify({
         type: 'error',
@@ -121,7 +286,8 @@ const app = new Elysia()
     },
     close(ws) {
       console.log('[WebSocket] Connection closed:', ws.id)
-      sessions.delete(ws.id)
+      // Don't delete session immediately to allow reconnection
+      // sessions.delete(ws.id)
     },
   })
 

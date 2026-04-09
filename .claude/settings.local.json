@@ -18,7 +18,15 @@
       "Bash(pkill -f \"bun\")",
       "Bash(pkill -f \"elysia\")",
       "Bash(npm run:*)",
-      "Bash(pkill -f \"bun.*index.ts\")"
+      "Bash(pkill -f \"bun.*index.ts\")",
+      "Bash(npx tsc:*)",
+      "Bash(npm list:*)",
+      "Bash(kane-work)",
+      "Bash(mysql -h localhost -u root -p123456 -e \"DESCRIBE `kane-work`.local_users;\")",
+      "Bash(npx tsx:*)",
+      "Bash(python3:*)",
+      "Read(//tmp/**)",
+      "Bash(bun tsc:*)"
     ]
   }
 }

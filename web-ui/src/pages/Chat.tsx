@@ -10,9 +10,15 @@ import {
   ShieldAlert,
   CheckCircle,
   XCircle,
+  MessageSquare,
+  Trash2,
+  Edit2,
+  Check,
 } from 'lucide-react'
 import { useChatStore } from '@/store/useChatStore'
 import { cn, formatTime } from '@/lib/utils'
+import ReactMarkdown from 'react-markdown'
+import remarkGfm from 'remark-gfm'
 
 type PermissionRequest = {
   id: string
@@ -23,7 +29,8 @@ type PermissionRequest = {
 }
 
 type ChatEvent =
-  | { type: 'connected'; message: string }
+  | { type: 'connected'; message: string; sessionId?: string }
+  | { type: 'history_loaded'; messages: Array<{ id: string; content: string; role: string; agentId?: string; agentName?: string; agentAvatar?: string; timestamp: string }> }
   | { type: 'assistant_text'; text: string }
   | { type: 'assistant_tool_use'; name: string; input: Record<string, unknown> }
   | { type: 'tool_result'; name: string; result: string; isError?: boolean }
@@ -31,6 +38,7 @@ type ChatEvent =
   | { type: 'ask_user_question'; question: string; options?: string[] }
   | { type: 'done' }
   | { type: 'error'; message: string }
+  | { type: 'title_updated'; title: string }
 
 // Singleton WebSocket manager outside React
 class WsManager {
@@ -38,20 +46,42 @@ class WsManager {
   private listeners: Array<(data: ChatEvent) => void> = []
   private reconnectTimer: ReturnType<typeof setTimeout> | null = null
   private isConnecting = false
+  private currentSessionId: string | null = null
+  private pendingMessages: unknown[] = []
 
-  connect() {
-    if (this.ws?.readyState === WebSocket.OPEN || this.isConnecting) {
+  connect(sessionId?: string) {
+    // If already connecting to the same session, don't reconnect
+    if (this.isConnecting && this.currentSessionId === sessionId) {
       return
     }
-    this.isConnecting = true
 
-    console.log('[WsManager] Connecting...')
-    const ws = new WebSocket('ws://localhost:8080/ws/chat')
+    // If connected to a different session, disconnect first
+    if (this.ws?.readyState === WebSocket.OPEN && this.currentSessionId !== sessionId) {
+      console.log('[WsManager] Switching from session', this.currentSessionId, 'to', sessionId)
+      this.disconnect(false) // Don't clear reconnect timer when switching sessions
+    }
+
+    // If already connected to the same session, do nothing
+    if (this.ws?.readyState === WebSocket.OPEN && this.currentSessionId === sessionId) {
+      return
+    }
+
+    this.isConnecting = true
+    this.currentSessionId = sessionId || null
+
+    console.log('[WsManager] Connecting... sessionId:', sessionId)
+    const ws = new WebSocket(`ws://localhost:8080/ws/chat${sessionId ? `?sessionId=${sessionId}` : ''}`)
     this.ws = ws
 
     ws.onopen = () => {
-      console.log('[WsManager] Connected')
+      console.log('[WsManager] Connected, sessionId:', sessionId)
       this.isConnecting = false
+
+      // Send any pending messages
+      while (this.pendingMessages.length > 0) {
+        const msg = this.pendingMessages.shift()
+        if (msg) this.send(msg)
+      }
     }
 
     ws.onmessage = (event) => {
@@ -69,14 +99,29 @@ class WsManager {
       console.log('[WsManager] Closed')
       this.ws = null
       this.isConnecting = false
-      // Auto reconnect
-      if (!this.reconnectTimer) {
+      // Auto reconnect only if we have a current session and no timer
+      if (this.currentSessionId && !this.reconnectTimer) {
         this.reconnectTimer = setTimeout(() => {
           this.reconnectTimer = null
-          this.connect()
+          this.connect(this.currentSessionId || undefined)
         }, 3000)
       }
     }
+  }
+
+  disconnect(clearSession = true) {
+    if (this.ws) {
+      this.ws.close()
+      this.ws = null
+    }
+    if (this.reconnectTimer) {
+      clearTimeout(this.reconnectTimer)
+      this.reconnectTimer = null
+    }
+    if (clearSession) {
+      this.currentSessionId = null
+    }
+    this.pendingMessages = []
   }
 
   send(msg: unknown): boolean {
@@ -84,6 +129,8 @@ class WsManager {
       this.ws.send(JSON.stringify(msg))
       return true
     }
+    // Queue message if not connected
+    this.pendingMessages.push(msg)
     return false
   }
 
@@ -98,6 +145,10 @@ class WsManager {
   get isOpen() {
     return this.ws?.readyState === WebSocket.OPEN
   }
+
+  get sessionId() {
+    return this.currentSessionId
+  }
 }
 
 const wsManager = new WsManager()
@@ -109,15 +160,26 @@ export default function Chat() {
     activeAgents,
     isTyping,
     currentAgent,
+    sessions,
+    currentSessionId,
     addMessage,
     setTyping,
     setCurrentAgent,
     toggleAgent,
+    setSessions,
+    setCurrentSessionId,
+    addSession,
+    removeSession,
+    updateSessionTitle,
+    clearMessages,
   } = useChatStore()
 
   const [input, setInput] = useState('')
   const [permission, setPermission] = useState<PermissionRequest | null>(null)
   const [question, setQuestion] = useState<{ question: string; options?: string[] } | null>(null)
+  const [editingSessionId, setEditingSessionId] = useState<string | null>(null)
+  const [editingTitle, setEditingTitle] = useState('')
+  const [isLoadingSessions, setIsLoadingSessions] = useState(true)
   const streamingMsgIdRef = useRef<string | null>(null)
   const messagesEndRef = useRef<HTMLDivElement>(null)
 
@@ -129,17 +191,46 @@ export default function Chat() {
     scrollToBottom()
   }, [messages])
 
-  // Setup WebSocket once
+  // Load all sessions and agents on mount
   useEffect(() => {
-    wsManager.connect()
+    loadSessions()
+    // Load agents from API
+    const { loadAgents } = useChatStore.getState()
+    loadAgents()
+  }, [])
 
+  // Connect WebSocket and load messages when session changes
+  useEffect(() => {
+    if (currentSessionId) {
+      // Disconnect any existing connection first
+      wsManager.disconnect(false) // false = keep session tracking for reconnect
+      // Connect with the new session ID
+      wsManager.connect(currentSessionId)
+      // Load messages via REST API (more reliable than WebSocket for history)
+      loadSessionMessages(currentSessionId)
+    }
+  }, [currentSessionId])
+
+  // Setup WebSocket listeners
+  useEffect(() => {
     const unsubscribe = wsManager.subscribe((data) => {
       const store = useChatStore.getState()
 
       switch (data.type) {
         case 'connected':
           console.log('[Chat] Connected to server')
+          if (data.sessionId) {
+            store.setCurrentSessionId(data.sessionId)
+          }
+          // Request history after connection
+          wsManager.send({ type: 'load_history' })
           break
+        case 'history_loaded': {
+          // Only log, don't update store - we use REST API for loading history
+          // This prevents race conditions between WebSocket and REST
+          console.log('[Chat] WebSocket history loaded (ignored, using REST):', data.messages?.length || 0, 'messages')
+          break
+        }
         case 'assistant_text': {
           store.setTyping(true)
           if (streamingMsgIdRef.current) {
@@ -150,7 +241,6 @@ export default function Chat() {
               })
             }
           } else {
-            // Generate ID before adding message so we can track it
             const newId = Math.random().toString(36).substring(2, 15)
             streamingMsgIdRef.current = newId
             store.addMessage({
@@ -199,8 +289,20 @@ export default function Chat() {
         case 'done': {
           store.setTyping(false)
           streamingMsgIdRef.current = null
+          // Refresh sessions to update timestamp
+          loadSessions()
           break
         }
+        case 'title_updated': {
+          // Update session title in store
+          const sessionId = store.currentSessionId
+          if (sessionId && data.title) {
+            store.updateSessionTitle(sessionId, data.title)
+            console.log('[Chat] Title updated:', data.title)
+          }
+          break
+        }
+
         case 'error': {
           store.addMessage({
             content: `⚠️ ${data.message}`,
@@ -218,6 +320,147 @@ export default function Chat() {
     }
   }, [])
 
+  // Load all sessions
+  const loadSessions = async () => {
+    try {
+      const res = await fetch('/api/chat/sessions')
+      const data = await res.json()
+      if (data.sessions) {
+        // Always use server data, replacing local cache
+        setSessions(data.sessions)
+      } else {
+        // Server returned no sessions, clear local state
+        setSessions([])
+      }
+    } catch (err) {
+      console.error('Failed to load sessions:', err)
+    } finally {
+      setIsLoadingSessions(false)
+    }
+  }
+
+  // Load messages for a specific session
+  const loadSessionMessages = async (sessionId: string) => {
+    console.log('[Chat] Loading messages for session:', sessionId)
+    try {
+      const res = await fetch(`/api/chat/history/${sessionId}`)
+      const data = await res.json()
+      console.log('[Chat] Loaded messages:', data.messages?.length || 0)
+
+      // Always clear messages first to avoid duplicates
+      clearMessages()
+
+      if (data.messages && Array.isArray(data.messages) && data.messages.length > 0) {
+        // Use setTimeout to ensure clearMessages completes before adding new ones
+        setTimeout(() => {
+          for (const msg of data.messages) {
+            addMessage({
+              id: msg.id || Math.random().toString(36).substring(2, 15),
+              content: msg.content,
+              role: msg.role,
+              agentId: msg.agentId,
+              agentName: msg.agentName,
+              agentAvatar: msg.agentAvatar,
+            })
+          }
+        }, 0)
+      }
+    } catch (err) {
+      console.error('Failed to load session messages:', err)
+      clearMessages()
+    }
+  }
+
+  // Handle session switch
+  const handleSwitchSession = async (sessionId: string) => {
+    if (sessionId === currentSessionId) return
+    console.log('[Chat] Switching to session:', sessionId)
+
+    // Find the session to get agent info
+    const session = sessions.find(s => s.id === sessionId)
+    if (session?.agentId) {
+      const agent = agents.find(a => a.id === session.agentId)
+      if (agent) {
+        setCurrentAgent(agent)
+      }
+    }
+
+    setCurrentSessionId(sessionId)
+    // Load messages immediately
+    await loadSessionMessages(sessionId)
+  }
+
+  // Create new session
+  const createNewSession = async () => {
+    try {
+      const currentAgent = useChatStore.getState().currentAgent
+      const res = await fetch('/api/chat/sessions', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          title: `新对话 ${new Date().toLocaleString('zh-CN', { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' })}`,
+          agentId: currentAgent?.id,
+          agentName: currentAgent?.name,
+          agentAvatar: currentAgent?.avatar,
+        }),
+      })
+      const data = await res.json()
+      if (data.sessionId) {
+        addSession({
+          id: data.sessionId,
+          title: data.title,
+          updatedAt: new Date().toISOString(),
+          agentId: currentAgent?.id,
+          agentName: currentAgent?.name,
+          agentAvatar: currentAgent?.avatar,
+        })
+        setCurrentSessionId(data.sessionId)
+        clearMessages()
+      }
+    } catch (err) {
+      console.error('Failed to create session:', err)
+    }
+  }
+
+  // Delete session
+  const deleteSession = async (sessionId: string, e: React.MouseEvent) => {
+    e.stopPropagation()
+    if (!confirm('确定要删除这个对话吗？')) return
+
+    try {
+      await fetch(`/api/chat/sessions/${sessionId}`, { method: 'DELETE' })
+      removeSession(sessionId)
+      if (currentSessionId === sessionId) {
+        setCurrentSessionId(null)
+        clearMessages()
+      }
+    } catch (err) {
+      console.error('Failed to delete session:', err)
+    }
+  }
+
+  // Start editing session title
+  const startEditingTitle = (session: typeof sessions[0], e: React.MouseEvent) => {
+    e.stopPropagation()
+    setEditingSessionId(session.id)
+    setEditingTitle(session.title)
+  }
+
+  // Save session title
+  const saveSessionTitle = async (sessionId: string) => {
+    try {
+      await fetch(`/api/chat/sessions/${sessionId}`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ title: editingTitle }),
+      })
+      updateSessionTitle(sessionId, editingTitle)
+      setEditingSessionId(null)
+    } catch (err) {
+      console.error('Failed to update title:', err)
+    }
+  }
+
   const respondPermission = useCallback((allowed: boolean) => {
     if (wsManager.send({ type: 'permission_response', allowed })) {
       setPermission(null)
@@ -234,8 +477,13 @@ export default function Chat() {
 
   const handleSend = useCallback(async () => {
     if (!input.trim()) return
-    const trimmed = input.trim()
 
+    // If no session, create one first
+    if (!currentSessionId) {
+      await createNewSession()
+    }
+
+    const trimmed = input.trim()
     addMessage({ content: input, role: 'user' })
     setInput('')
     setTyping(true)
@@ -285,7 +533,7 @@ export default function Chat() {
       addMessage({ content: '⚠️ 连接失败，请刷新页面重试', role: 'assistant' })
       setTyping(false)
     }
-  }, [input, currentAgent, addMessage, setTyping])
+  }, [input, currentAgent, addMessage, setTyping, currentSessionId])
 
   const handleKeyDown = (e: React.KeyboardEvent) => {
     if (e.key === 'Enter' && !e.shiftKey) {
@@ -295,7 +543,107 @@ export default function Chat() {
   }
 
   return (
-    <div className="h-[calc(100vh-6rem)] flex gap-6 relative">
+    <div className="h-[calc(100vh-6rem)] flex gap-4 relative">
+      {/* Sessions Sidebar */}
+      <div className="w-64 bg-white rounded-xl border border-gray-200 overflow-hidden flex flex-col">
+        <div className="p-4 border-b border-gray-100">
+          <button
+            onClick={createNewSession}
+            className="w-full py-2.5 px-4 bg-accio-600 hover:bg-accio-700 text-white text-sm font-medium rounded-lg transition-colors flex items-center justify-center gap-2"
+          >
+            <Plus className="w-4 h-4" />
+            新建对话
+          </button>
+        </div>
+
+        <div className="flex-1 overflow-y-auto p-2 space-y-1">
+          {isLoadingSessions ? (
+            <div className="flex items-center justify-center py-8">
+              <div className="animate-spin w-5 h-5 border-2 border-accio-600 border-t-transparent rounded-full" />
+            </div>
+          ) : sessions.length === 0 ? (
+            <div className="text-center py-8 text-gray-400 text-sm">
+              <MessageSquare className="w-8 h-8 mx-auto mb-2 opacity-50" />
+              <p>暂无对话</p>
+              <p className="text-xs mt-1">点击上方按钮开始</p>
+            </div>
+          ) : (
+            sessions.map((session) => (
+              <div
+                key={session.id}
+                onClick={() => handleSwitchSession(session.id)}
+                className={cn(
+                  'group flex items-center gap-2 p-3 rounded-lg cursor-pointer transition-all',
+                  currentSessionId === session.id
+                    ? 'bg-accio-50 border border-accio-200'
+                    : 'hover:bg-gray-50 border border-transparent'
+                )}
+              >
+                <span className="text-lg flex-shrink-0" title={session.agentName || '默认助手'}>
+                  {session.agentAvatar || '🤖'}
+                </span>
+
+                <div className="flex-1 min-w-0">
+                  {editingSessionId === session.id ? (
+                    <div className="flex items-center gap-1">
+                      <input
+                        type="text"
+                        value={editingTitle}
+                        onChange={(e) => setEditingTitle(e.target.value)}
+                        onKeyDown={(e) => {
+                          if (e.key === 'Enter') saveSessionTitle(session.id)
+                          if (e.key === 'Escape') setEditingSessionId(null)
+                        }}
+                        onBlur={() => saveSessionTitle(session.id)}
+                        autoFocus
+                        className="flex-1 px-1.5 py-0.5 text-sm border border-accio-300 rounded focus:outline-none focus:ring-1 focus:ring-accio-500"
+                        onClick={(e) => e.stopPropagation()}
+                      />
+                      <button
+                        onClick={(e) => { e.stopPropagation(); saveSessionTitle(session.id); }}
+                        className="p-1 text-accio-600 hover:bg-accio-100 rounded"
+                      >
+                        <Check className="w-3 h-3" />
+                      </button>
+                    </div>
+                  ) : (
+                    <>
+                      <p className={cn(
+                        'text-sm font-medium truncate',
+                        currentSessionId === session.id ? 'text-accio-900' : 'text-gray-700'
+                      )}>
+                        {session.title}
+                      </p>
+                      <p className="text-xs text-gray-400 flex items-center gap-1">
+                        {session.agentName && <span>{session.agentName}</span>}
+                        <span>{new Date(session.updatedAt).toLocaleDateString('zh-CN')}</span>
+                      </p>
+                    </>
+                  )}
+                </div>
+
+                {editingSessionId !== session.id && (
+                  <div className="flex items-center gap-0.5 opacity-0 group-hover:opacity-100 transition-opacity">
+                    <button
+                      onClick={(e) => startEditingTitle(session, e)}
+                      className="p-1.5 text-gray-400 hover:text-gray-600 hover:bg-gray-100 rounded"
+                    >
+                      <Edit2 className="w-3 h-3" />
+                    </button>
+                    <button
+                      onClick={(e) => deleteSession(session.id, e)}
+                      className="p-1.5 text-gray-400 hover:text-red-600 hover:bg-red-50 rounded"
+                    >
+                      <Trash2 className="w-3 h-3" />
+                    </button>
+                  </div>
+                )}
+              </div>
+            ))
+          )}
+        </div>
+      </div>
+
       {/* Main Chat Area */}
       <div className="flex-1 flex flex-col bg-white rounded-xl border border-gray-200 overflow-hidden">
         {/* Chat Header */}
@@ -380,7 +728,7 @@ export default function Chat() {
 
               <div
                 className={cn(
-                  'max-w-[80%] rounded-2xl px-4 py-3 text-sm whitespace-pre-wrap',
+                  'max-w-[80%] rounded-2xl px-4 py-3 text-sm',
                   message.role === 'user'
                     ? 'bg-ali-500 text-white'
                     : message.role === 'system'
@@ -396,10 +744,13 @@ export default function Chat() {
                     <span className="text-xs text-gray-400">{formatTime(message.timestamp)}</span>
                   </div>
                 )}
-                <div className="space-y-1">
-                  {message.content.split('\n').map((line, i) => (
-                    <p key={i}>{line || ' '}</p>
-                  ))}
+                <div className={cn(
+                  "prose prose-sm max-w-none",
+                  message.role === 'user' ? "prose-invert text-white" : "text-gray-900"
+                )}>
+                  <ReactMarkdown remarkPlugins={[remarkGfm]}>
+                    {message.content}
+                  </ReactMarkdown>
                 </div>
               </div>
             </div>
@@ -504,8 +855,9 @@ export default function Chat() {
               value={input}
               onChange={(e) => setInput(e.target.value)}
               onKeyDown={handleKeyDown}
-              placeholder="描述您的需求，AI团队将协同处理..."
-              className="w-full pr-24 pl-12 py-4 bg-gray-50 border border-gray-200 rounded-xl resize-none focus:outline-none focus:ring-2 focus:ring-accio-500 focus:border-transparent transition-all"
+              placeholder={currentSessionId ? "描述您的需求，AI团队将协同处理..." : "点击左侧「新建对话」开始聊天"}
+              disabled={!currentSessionId}
+              className="w-full pr-24 pl-12 py-4 bg-gray-50 border border-gray-200 rounded-xl resize-none focus:outline-none focus:ring-2 focus:ring-accio-500 focus:border-transparent transition-all disabled:opacity-50 disabled:cursor-not-allowed"
               rows={2}
             />
             <button className="absolute left-4 top-1/2 -translate-y-1/2 p-2 text-gray-400 hover:text-gray-600 hover:bg-gray-200 rounded-lg transition-colors">
@@ -513,14 +865,16 @@ export default function Chat() {
             </button>
             <button
               onClick={handleSend}
-              disabled={!input.trim() || !!permission || !!question}
+              disabled={!input.trim() || !!permission || !!question || !currentSessionId}
               className="absolute right-4 top-1/2 -translate-y-1/2 px-4 py-2 bg-accio-600 hover:bg-accio-700 disabled:opacity-50 disabled:cursor-not-allowed text-white text-sm font-medium rounded-lg transition-colors flex items-center gap-2"
             >
               <Send className="w-4 h-4" />
               发送
             </button>
           </div>
-          <p className="mt-2 text-xs text-gray-400 text-center">按 Enter 发送，Shift + Enter 换行</p>
+          <p className="mt-2 text-xs text-gray-400 text-center">
+            {currentSessionId ? '按 Enter 发送，Shift + Enter 换行' : '请先创建或选择一个对话'}
+          </p>
         </div>
       </div>
 

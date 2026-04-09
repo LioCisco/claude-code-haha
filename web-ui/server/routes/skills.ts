@@ -1,162 +1,290 @@
 import { Elysia, t } from 'elysia'
+import { getAllSkills, getSkillById, execute } from '../db'
+import { executeSkill, registerBuiltinHandler } from '../lib/skillExecutor'
 
-const platformConfigs: Record<string, { name: string; maxChars: number; features: string[] }> = {
-  weibo: { name: '微博', maxChars: 2000, features: ['话题标签', '图片', '视频'] },
-  xiaohongshu: { name: '小红书', maxChars: 1000, features: ['标题', '正文', '话题标签', 'emoji', '图片'] },
-  douyin: { name: '抖音', maxChars: 500, features: ['标题', '话题标签', '视频'] },
-  wechat: { name: '微信公众号', maxChars: 10000, features: ['长文', '图片', '视频', '排版'] },
-  twitter: { name: 'Twitter/X', maxChars: 280, features: ['话题标签', '图片', '视频'] },
-  x: { name: 'X', maxChars: 280, features: ['话题标签', '图片', '视频'] },
-  linkedin: { name: 'LinkedIn', maxChars: 3000, features: ['专业内容', '图片', '视频'] },
+// Icon 映射
+const iconMap: Record<string, string> = {
+  ShoppingCart: 'ShoppingCart',
+  FileText: 'FileText',
+  Image: 'Image',
+  Globe: 'Globe',
+  MessageSquare: 'MessageSquare',
+  BarChart3: 'BarChart3',
+  Database: 'Database',
+  Shield: 'Shield',
+  Zap: 'Zap',
+  TrendingUp: 'TrendingUp',
+  Code: 'Code',
+  Wrench: 'Wrench',
+  Palette: 'Palette',
+  Search: 'Search',
+  Share2: 'Share2',
+  Target: 'Target',
+  Users: 'Users',
+  Building: 'Building',
+  PenTool: 'PenTool',
 }
 
-function generateSocialContent(platform: string, topic: string, style?: string, needImage = false, needVideo = false) {
-  const config = platformConfigs[platform] || { name: platform, maxChars: 1000, features: ['文本', '图片'] }
-  const styleText = style || '专业'
-
-  const titles: Record<string, string[]> = {
-    xiaohongshu: [`🔥${topic}｜一篇说清楚！`, `${topic}✨干货分享`, `关于${topic}，我的真实体验💡`],
-    weibo: [`【热点】${topic}`, `${topic}，你怎么看？`, `#${topic}# 最新消息`],
-    douyin: [`${topic}？3秒告诉你答案`, `原来${topic}这么简单`, `99%的人不知道的${topic}技巧`],
-    wechat: [`深度解析：${topic}`, `${topic}完全指南`, `做好${topic}的10个关键`],
-    twitter: [`Quick take on ${topic}:`, `Thread about ${topic} 🧵`, `${topic} in a nutshell.`],
-    x: [`Quick take on ${topic}:`, `Thread about ${topic} 🧵`, `${topic} in a nutshell.`],
-    linkedin: [`Insights on ${topic}`, `How to master ${topic}`, `${topic}: A professional perspective.`],
-  }
-
-  const title = titles[platform]?.[Math.floor(Math.random() * (titles[platform]?.length || 1))] || `${topic} - ${styleText}分享`
-
-  const bodies: Record<string, string> = {
-    xiaohongshu: `姐妹们，今天来聊聊${topic}～\n\n首先，我觉得最重要的是找准方向\n然后持续输出有价值的内容\n最后别忘了和粉丝互动\n\n希望这篇对你有帮助！`,
-    weibo: `最近很多人在问${topic}，我整理了一些观点，分享给大家。\n\n核心就是：专注+坚持+方法。\n\n大家有什么想法欢迎评论区交流！`,
-    douyin: `${topic}其实没那么复杂，记住这三点就够了！`,
-    wechat: `大家好，今天我们来深入探讨一下${topic}。\n\n一、行业现状分析\n二、关键成功要素\n三、实操建议\n四、未来趋势\n\n总结：${topic}是一个值得长期投入的赛道。`,
-    twitter: `Here are 3 quick tips on ${topic}:\n1. Stay consistent\n2. Provide value\n3. Engage with your audience`,
-    x: `Here are 3 quick tips on ${topic}:\n1. Stay consistent\n2. Provide value\n3. Engage with your audience`,
-    linkedin: `In my experience, ${topic} requires both strategy and execution. Here is what I have learned over the years.\n\nWould love to hear your thoughts.`,
-  }
-
-  const body = bodies[platform] || `关于${topic}的${styleText}内容分享。`
-
-  const tagsMap: Record<string, string[]> = {
-    xiaohongshu: [`#${topic}`, '#干货分享', '#自媒体运营', '#内容创作'],
-    weibo: [`#${topic}#`, '#热门推荐', '#观点分享'],
-    douyin: [`#${topic}`, '#短视频运营', '#上热门'],
-    wechat: [],
-    twitter: [`#${topic.replace(/\s+/g, '')}`, '#ContentCreator', '#SocialMedia'],
-    x: [`#${topic.replace(/\s+/g, '')}`, '#ContentCreator', '#SocialMedia'],
-    linkedin: [`#${topic.replace(/\s+/g, '')}`, '#Leadership', '#Innovation'],
-  }
-
-  const tags = tagsMap[platform] || []
-
+// Convert DB row to Skill object
+function dbRowToSkill(row: any) {
   return {
-    platform: config.name,
-    title,
-    body,
-    tags,
-    style: styleText,
-    images: needImage ? [`https://placehold.co/800x600/22c55e/ffffff?text=${encodeURIComponent(platform)}+配图`] : [],
-    videos: needVideo ? [`https://placehold.co/800x600/3b82f6/ffffff?text=${encodeURIComponent(platform)}+短视频`] : [],
-    estimatedReach: Math.floor(Math.random() * 10000) + 1000,
+    id: row.id,
+    name: row.name,
+    description: row.description,
+    icon: row.icon,
+    category: row.category,
+    status: row.status,
+    isBuiltIn: row.is_built_in === 1,
+
+    // 执行配置
+    executionType: row.execution_type,
+    executionConfig: parseJson(row.execution_config),
+
+    // 参数定义
+    configSchema: parseJson(row.config_schema),
+
+    // 认证
+    authType: row.auth_type,
+
+    // 高级设置
+    timeoutMs: row.timeout_ms,
+    retryPolicy: parseJson(row.retry_policy),
+    rateLimitPerMinute: row.rate_limit_per_minute,
+
+    // 统计
+    usage: row.usage_count,
+    successCount: row.success_count,
+    failCount: row.fail_count,
+    avgExecutionMs: row.avg_execution_ms,
+
+    // 文档
+    documentationUrl: row.documentation_url,
+    examples: parseJson(row.examples),
+
+    createdAt: row.created_at,
+    updatedAt: row.updated_at,
   }
 }
 
-const skills = [
-  {
-    id: '1688-search',
-    name: '1688 智能搜货',
-    description: '基于图片或文字描述在1688平台搜索优质货源',
-    icon: 'ShoppingCart',
-    category: 'procurement',
-    status: 'active',
-    usage: 1234,
-  },
-  {
-    id: 'product-description',
-    name: '商品描述生成',
-    description: '自动生成吸引人的商品标题和描述',
-    icon: 'FileText',
-    category: 'content',
-    status: 'active',
-    usage: 892,
-  },
-  {
-    id: 'ai-model-image',
-    name: 'AI 模特生成',
-    description: '自动生成专业的产品展示图',
-    icon: 'Image',
-    category: 'content',
-    status: 'active',
-    usage: 567,
-  },
-  {
-    id: 'shopify-builder',
-    name: 'Shopify 店铺搭建',
-    description: '自动创建和配置Shopify店铺',
-    icon: 'Globe',
-    category: 'store',
-    status: 'active',
-    usage: 234,
-  },
-  {
-    id: 'seo-optimizer',
-    name: 'SEO 优化器',
-    description: '自动优化商品关键词和搜索排名',
-    icon: 'TrendingUp',
-    category: 'store',
-    status: 'active',
-    usage: 445,
-  },
-  {
-    id: 'social-post',
-    name: '社媒内容发布',
-    description: '自动生成并发布小红书、微博、抖音、公众号、Twitter等平台内容',
-    icon: 'MessageSquare',
-    category: 'marketing',
-    status: 'active',
-    usage: 678,
-  },
-]
+function parseJson(value: any): any {
+  if (!value) return null
+  if (typeof value === 'string') {
+    try {
+      return JSON.parse(value)
+    } catch {
+      return null
+    }
+  }
+  return value
+}
 
 export const skillRoutes = new Elysia({ prefix: '/api/skills' })
-  .get('/', () => skills)
-  .get('/:id', ({ params }) => {
-    const skill = skills.find(s => s.id === params.id)
-    if (!skill) throw new Error('Skill not found')
-    return skill
+  // Get all skills
+  .get('/', async ({ query }) => {
+    const category = query.category as string | undefined
+    const rows = await getAllSkills(category)
+    const skills = rows.map(dbRowToSkill)
+    return { success: true, skills }
   })
-  .post('/:id/execute', ({ params, body }) => {
-    if (params.id === 'social-post') {
-      const { platform, topic, style, needImage, needVideo } = body.params as {
-        platform: string
-        topic: string
-        style?: string
-        needImage?: boolean
-        needVideo?: boolean
-      }
-      if (!platform || !topic) {
-        return {
-          success: false,
-          message: '缺少必要参数：platform 和 topic',
-          result: null,
-        }
-      }
-      const content = generateSocialContent(platform, topic, style, needImage, needVideo)
-      return {
-        success: true,
-        message: `已成功为 ${content.platform} 生成社媒内容`,
-        result: content,
-      }
-    }
 
-    return {
-      success: true,
-      message: `Skill ${params.id} executed`,
-      result: { /* execution result */ }
+  // Get single skill
+  .get('/:id', async ({ params, set }) => {
+    const row = await getSkillById(params.id)
+    if (!row) {
+      set.status = 404
+      return { success: false, message: 'Skill not found' }
+    }
+    return { success: true, skill: dbRowToSkill(row) }
+  })
+
+  // Update skill configuration
+  .put('/:id', async ({ params, body, set }) => {
+    try {
+      const updates: string[] = []
+      const values: any[] = []
+
+      if (body.executionType !== undefined) {
+        updates.push('execution_type = ?')
+        values.push(body.executionType)
+      }
+      if (body.executionConfig !== undefined) {
+        updates.push('execution_config = ?')
+        values.push(JSON.stringify(body.executionConfig))
+      }
+      if (body.authType !== undefined) {
+        updates.push('auth_type = ?')
+        values.push(body.authType)
+      }
+      if (body.authConfig !== undefined) {
+        updates.push('auth_config = ?')
+        values.push(JSON.stringify(body.authConfig))
+      }
+      if (body.timeoutMs !== undefined) {
+        updates.push('timeout_ms = ?')
+        values.push(body.timeoutMs)
+      }
+      if (body.retryPolicy !== undefined) {
+        updates.push('retry_policy = ?')
+        values.push(JSON.stringify(body.retryPolicy))
+      }
+      if (body.rateLimitPerMinute !== undefined) {
+        updates.push('rate_limit_per_minute = ?')
+        values.push(body.rateLimitPerMinute)
+      }
+      if (body.configSchema !== undefined) {
+        updates.push('config_schema = ?')
+        values.push(JSON.stringify(body.configSchema))
+      }
+      if (body.documentationUrl !== undefined) {
+        updates.push('documentation_url = ?')
+        values.push(body.documentationUrl)
+      }
+      if (body.examples !== undefined) {
+        updates.push('examples = ?')
+        values.push(JSON.stringify(body.examples))
+      }
+      if (body.status !== undefined) {
+        updates.push('status = ?')
+        values.push(body.status)
+      }
+
+      if (updates.length === 0) {
+        return { success: true, message: 'No changes' }
+      }
+
+      updates.push('updated_at = NOW()')
+      values.push(params.id)
+
+      await execute(`UPDATE skills SET ${updates.join(', ')} WHERE id = ?`, values)
+
+      const row = await getSkillById(params.id)
+      return { success: true, skill: dbRowToSkill(row!) }
+    } catch (err) {
+      set.status = 400
+      return { success: false, message: (err as Error).message }
     }
   }, {
     body: t.Object({
-      params: t.Record(t.String(), t.Any())
+      executionType: t.Optional(t.String()),
+      executionConfig: t.Optional(t.Record(t.String(), t.Any())),
+      authType: t.Optional(t.String()),
+      authConfig: t.Optional(t.Record(t.String(), t.Any())),
+      timeoutMs: t.Optional(t.Number()),
+      retryPolicy: t.Optional(t.Record(t.String(), t.Any())),
+      rateLimitPerMinute: t.Optional(t.Number()),
+      configSchema: t.Optional(t.Record(t.String(), t.Any())),
+      documentationUrl: t.Optional(t.String()),
+      examples: t.Optional(t.Array(t.Record(t.String(), t.Any()))),
+      status: t.Optional(t.String()),
+    })
+  })
+
+  // Execute skill
+  .post('/:id/execute', async ({ params, body, set, request }) => {
+    try {
+      // 获取 agentId 和 sessionId（从 header 或 body）
+      const agentId = body.agentId as string | undefined
+      const sessionId = body.sessionId as string | undefined
+
+      const result = await executeSkill(params.id, body.params || {}, {
+        agentId,
+        sessionId,
+      })
+
+      if (!result.success) {
+        set.status = 400
+        return {
+          success: false,
+          message: result.error,
+          durationMs: result.durationMs,
+        }
+      }
+
+      return {
+        success: true,
+        message: `技能执行成功`,
+        result: result.data,
+        durationMs: result.durationMs,
+      }
+    } catch (err) {
+      set.status = 400
+      return { success: false, message: (err as Error).message }
+    }
+  }, {
+    body: t.Object({
+      params: t.Optional(t.Record(t.String(), t.Any())),
+      agentId: t.Optional(t.String()),
+      sessionId: t.Optional(t.String()),
+    })
+  })
+
+  // Get skill execution history
+  .get('/:id/history', async ({ params, query, set }) => {
+    try {
+      const limit = parseInt(query.limit as string || '50')
+      const rows = await getSkillById(params.id) // 需要先实现查询历史的方法
+
+      // 这里应该查询 skill_executions 表
+      return { success: true, history: [] }
+    } catch (err) {
+      set.status = 400
+      return { success: false, message: (err as Error).message }
+    }
+  })
+
+  // Install skill from marketplace/config
+  .post('/install', async ({ body, set }) => {
+    try {
+      const skillId = body.id || `skill-${Date.now()}`
+
+      await execute(`
+        INSERT INTO skills (
+          id, name, description, icon, category, status, is_built_in,
+          execution_type, execution_config, config_schema, auth_type, auth_config,
+          timeout_ms, retry_policy, rate_limit_per_minute, documentation_url, examples
+        ) VALUES (?, ?, ?, ?, ?, ?, FALSE, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      `, [
+        skillId,
+        body.name,
+        body.description,
+        body.icon || 'Wrench',
+        body.category,
+        body.status || 'active',
+        body.executionType || 'builtin',
+        JSON.stringify(body.executionConfig || {}),
+        JSON.stringify(body.configSchema || {}),
+        body.authType || 'none',
+        JSON.stringify(body.authConfig || {}),
+        body.timeoutMs || 30000,
+        JSON.stringify(body.retryPolicy || { maxRetries: 0 }),
+        body.rateLimitPerMinute || 60,
+        body.documentationUrl || null,
+        JSON.stringify(body.examples || []),
+      ])
+
+      const row = await getSkillById(skillId)
+      return { success: true, skill: dbRowToSkill(row!) }
+    } catch (err) {
+      set.status = 400
+      return { success: false, message: (err as Error).message }
+    }
+  }, {
+    body: t.Object({
+      id: t.Optional(t.String()),
+      name: t.String(),
+      description: t.String(),
+      icon: t.Optional(t.String()),
+      category: t.String(),
+      status: t.Optional(t.String()),
+      executionType: t.Optional(t.String()),
+      executionConfig: t.Optional(t.Record(t.String(), t.Any())),
+      configSchema: t.Optional(t.Record(t.String(), t.Any())),
+      authType: t.Optional(t.String()),
+      authConfig: t.Optional(t.Record(t.String(), t.Any())),
+      timeoutMs: t.Optional(t.Number()),
+      retryPolicy: t.Optional(t.Record(t.String(), t.Any())),
+      rateLimitPerMinute: t.Optional(t.Number()),
+      documentationUrl: t.Optional(t.String()),
+      examples: t.Optional(t.Array(t.Record(t.String(), t.Any()))),
     })
   })

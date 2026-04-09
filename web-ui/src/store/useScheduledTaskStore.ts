@@ -134,7 +134,29 @@ export const useScheduledTaskStore = create<ScheduledTaskState>()((set, get) => 
       })
       const data = await res.json()
       if (data.success) {
+        // 立即刷新任务列表以显示 running 状态
         await get().fetchTasks()
+
+        // 如果任务正在执行，启动轮询以实时更新状态
+        const task = get().tasks.find(t => t.id === id)
+        const hasRunning = task?.results?.some(r => r.status === 'running')
+
+        if (hasRunning) {
+          // 每 2 秒轮询一次，最多 30 次（1分钟）
+          let pollCount = 0
+          const pollInterval = setInterval(async () => {
+            await get().fetchTasks()
+            pollCount++
+
+            // 检查是否还有 running 状态
+            const updatedTask = get().tasks.find(t => t.id === id)
+            const stillRunning = updatedTask?.results?.some(r => r.status === 'running')
+
+            if (!stillRunning || pollCount >= 30) {
+              clearInterval(pollInterval)
+            }
+          }, 2000)
+        }
       }
     } catch (err) {
       console.error('Failed to run task:', err)

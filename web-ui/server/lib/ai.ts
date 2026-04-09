@@ -1,4 +1,5 @@
 import Anthropic from '@anthropic-ai/sdk'
+import { queryOne } from '../db'
 
 const apiKey = process.env.ANTHROPIC_AUTH_TOKEN || process.env.ANTHROPIC_API_KEY
 const baseURL = process.env.ANTHROPIC_BASE_URL
@@ -17,6 +18,7 @@ export const anthropic = apiKey
 
 export const DEFAULT_MODEL = model
 
+// Default system prompts (fallback when DB is not available)
 export const agentSystemPrompts: Record<string, string> = {
   'product-researcher': `你是一位资深的电商选品专员，擅长市场趋势分析、竞品调研、1688货源搜索。
 回复风格：数据驱动、务实、给出具体 actionable 建议。`,
@@ -30,6 +32,66 @@ export const agentSystemPrompts: Record<string, string> = {
 回复风格：热点敏感、营销话语、强调转化和曝光。`,
   default: `你是 Kane Work 智能助手，一位专业的电商AI团队协作助手。
 请用中文回复，保持友好、专业、简洁。`,
+}
+
+// Get agent system prompt from database or fallback to defaults
+export async function getAgentSystemPrompt(agentId?: string): Promise<string> {
+  if (!agentId) {
+    return agentSystemPrompts.default
+  }
+
+  try {
+    const agent = await queryOne<any>(
+      'SELECT system_prompt FROM agents WHERE id = ? AND is_active = TRUE',
+      [agentId]
+    )
+
+    if (agent?.system_prompt) {
+      return agent.system_prompt
+    }
+  } catch (err) {
+    console.warn('[AI] Failed to fetch agent prompt from DB:', err)
+  }
+
+  // Fallback to default prompts
+  return agentSystemPrompts[agentId] || agentSystemPrompts.default
+}
+
+// Get full agent configuration from database
+export async function getAgentConfig(agentId: string): Promise<{
+  id: string
+  name: string
+  role: string
+  avatar: string
+  description: string
+  skills: string[]
+  model: string
+  color: string
+  systemPrompt: string
+} | null> {
+  try {
+    const agent = await queryOne<any>(
+      'SELECT * FROM agents WHERE id = ? AND is_active = TRUE',
+      [agentId]
+    )
+
+    if (!agent) return null
+
+    return {
+      id: agent.id,
+      name: agent.name,
+      role: agent.role,
+      avatar: agent.avatar,
+      description: agent.description,
+      skills: typeof agent.skills === 'string' ? JSON.parse(agent.skills) : agent.skills || [],
+      model: agent.model,
+      color: agent.color,
+      systemPrompt: agent.system_prompt || agentSystemPrompts[agentId] || agentSystemPrompts.default,
+    }
+  } catch (err) {
+    console.error('[AI] Failed to fetch agent config:', err)
+    return null
+  }
 }
 
 export async function chatWithAI(options: {

@@ -160,6 +160,8 @@ import {
 } from './skills/loadSkillsDir.js'
 import { getBundledSkills } from './skills/bundledSkills.js'
 import { getBuiltinPluginSkillCommands } from './plugins/builtinPlugins.js'
+import { getWebUISkillCommands, clearWebUISkillsCache } from './skills/webUISkills.js'
+import { getScheduledTaskCommands, clearScheduledTasksCache } from './skills/webUIScheduledTasks.js'
 import {
   getPluginCommands,
   clearPluginCommandCache,
@@ -355,9 +357,11 @@ async function getSkills(cwd: string): Promise<{
   pluginSkills: Command[]
   bundledSkills: Command[]
   builtinPluginSkills: Command[]
+  webUISkills: Command[]
+  webUIScheduledTasks: Command[]
 }> {
   try {
-    const [skillDirCommands, pluginSkills] = await Promise.all([
+    const [skillDirCommands, pluginSkills, webUISkills, webUIScheduledTasks] = await Promise.all([
       getSkillDirCommands(cwd).catch(err => {
         logError(toError(err))
         logForDebugging(
@@ -370,19 +374,31 @@ async function getSkills(cwd: string): Promise<{
         logForDebugging('Plugin skills failed to load, continuing without them')
         return []
       }),
+      getWebUISkillCommands().catch(err => {
+        logError(toError(err))
+        logForDebugging('Web-UI skills failed to load, continuing without them')
+        return []
+      }),
+      getScheduledTaskCommands().catch(err => {
+        logError(toError(err))
+        logForDebugging('Web-UI scheduled tasks failed to load, continuing without them')
+        return []
+      }),
     ])
     // Bundled skills are registered synchronously at startup
     const bundledSkills = getBundledSkills()
     // Built-in plugin skills come from enabled built-in plugins
     const builtinPluginSkills = getBuiltinPluginSkillCommands()
     logForDebugging(
-      `getSkills returning: ${skillDirCommands.length} skill dir commands, ${pluginSkills.length} plugin skills, ${bundledSkills.length} bundled skills, ${builtinPluginSkills.length} builtin plugin skills`,
+      `getSkills returning: ${skillDirCommands.length} skill dir commands, ${pluginSkills.length} plugin skills, ${bundledSkills.length} bundled skills, ${builtinPluginSkills.length} builtin plugin skills, ${webUISkills.length} web-ui skills, ${webUIScheduledTasks.length} web-ui scheduled task commands`,
     )
     return {
       skillDirCommands,
       pluginSkills,
       bundledSkills,
       builtinPluginSkills,
+      webUISkills,
+      webUIScheduledTasks,
     }
   } catch (err) {
     // This should never happen since we catch at the Promise level, but defensive
@@ -393,6 +409,8 @@ async function getSkills(cwd: string): Promise<{
       pluginSkills: [],
       bundledSkills: [],
       builtinPluginSkills: [],
+      webUISkills: [],
+      webUIScheduledTasks: [],
     }
   }
 }
@@ -448,7 +466,7 @@ export function meetsAvailabilityRequirement(cmd: Command): boolean {
  */
 const loadAllCommands = memoize(async (cwd: string): Promise<Command[]> => {
   const [
-    { skillDirCommands, pluginSkills, bundledSkills, builtinPluginSkills },
+    { skillDirCommands, pluginSkills, bundledSkills, builtinPluginSkills, webUISkills, webUIScheduledTasks },
     pluginCommands,
     workflowCommands,
   ] = await Promise.all([
@@ -464,6 +482,8 @@ const loadAllCommands = memoize(async (cwd: string): Promise<Command[]> => {
     ...workflowCommands,
     ...pluginCommands,
     ...pluginSkills,
+    ...webUISkills,
+    ...webUIScheduledTasks,
     ...COMMANDS(),
   ]
 })
@@ -536,6 +556,8 @@ export function clearCommandsCache(): void {
   clearPluginCommandCache()
   clearPluginSkillsCache()
   clearSkillCaches()
+  clearWebUISkillsCache()
+  clearScheduledTasksCache()
 }
 
 /**

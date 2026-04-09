@@ -9,12 +9,16 @@ import Analytics from './pages/Analytics'
 import Settings from './pages/Settings'
 import Onboarding from './pages/Onboarding'
 import ScheduledTasks from './pages/ScheduledTasks'
+import TaskExecutionLog from './pages/TaskExecutionLog'
+import Login from './pages/Login'
+import ProtectedRoute from './components/auth/ProtectedRoute'
 
 function App() {
   return (
     <Routes>
+      <Route path="/login" element={<Login />} />
       <Route path="/onboarding" element={<Onboarding />} />
-      <Route path="/" element={<Layout />}>
+      <Route path="/" element={<ProtectedRoute><Layout /></ProtectedRoute>}>
         <Route index element={<Dashboard />} />
         <Route path="chat" element={<Chat />} />
         <Route path="agents" element={<Agents />} />
@@ -22,6 +26,7 @@ function App() {
         <Route path="store-builder" element={<StoreBuilder />} />
         <Route path="analytics" element={<Analytics />} />
         <Route path="scheduled-tasks" element={<ScheduledTasks />} />
+        <Route path="scheduled-tasks/:taskId/log" element={<TaskExecutionLog />} />
         <Route path="settings" element={<Settings />} />
       </Route>
     </Routes>

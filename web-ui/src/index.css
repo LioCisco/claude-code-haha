@@ -114,3 +114,49 @@
 .pulse-ring {
   animation: pulse-ring 2s infinite;
 }
+
+/* Markdown Content Styles - Reduce extra spacing */
+.prose p {
+  margin-bottom: 0.5em;
+  margin-top: 0.5em;
+}
+
+.prose p:first-child {
+  margin-top: 0;
+}
+
+.prose p:last-child {
+  margin-bottom: 0;
+}
+
+.prose br {
+  display: none;
+}
+
+.prose > br {
+  display: block;
+}
+
+/* For user messages (prose-invert) */
+.prose-invert p {
+  margin-bottom: 0.5em;
+  margin-top: 0.5em;
+}
+
+.prose-invert p:first-child {
+  margin-top: 0;
+}
+
+.prose-invert p:last-child {
+  margin-bottom: 0;
+}
+
+.prose-invert br {
+  display: none;
+}
+
+/* Preserve line breaks in code blocks */
+.prose pre br,
+.prose code br {
+  display: block;
+}

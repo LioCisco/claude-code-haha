@@ -1,4 +1,5 @@
 import { useState, useEffect } from 'react'
+import { useNavigate } from 'react-router-dom'
 import {
   Clock,
   Play,
@@ -8,6 +9,7 @@ import {
   RefreshCw,
   ChevronDown,
   ChevronUp,
+  ChevronRight,
   Bot,
   CheckCircle,
   XCircle,
@@ -35,18 +37,19 @@ const scheduleTypePlaceholders: Record<ScheduleType, string> = {
 }
 
 export default function ScheduledTasks() {
+  const navigate = useNavigate()
   const { tasks, isLoading, error, fetchTasks, createTask, updateTask, deleteTask, toggleTask, runTaskNow } =
     useScheduledTaskStore()
-  const { agents } = useChatStore()
+  const { agents, loadAgents } = useChatStore()
 
   const [expandedTask, setExpandedTask] = useState<string | null>(null)
   const [showModal, setShowModal] = useState(false)
   const [editingTask, setEditingTask] = useState<ScheduledTask | null>(null)
-  const [showResults, setShowResults] = useState<string | null>(null)
 
   // Form state
   const [formData, setFormData] = useState({
     name: '',
+    description: '',
     agentId: '',
     sessionId: '',
     prompt: '',
@@ -57,14 +60,16 @@ export default function ScheduledTasks() {
 
   useEffect(() => {
     fetchTasks()
+    loadAgents() // Load agents for selection
     // Refresh every 30 seconds
     const interval = setInterval(fetchTasks, 30000)
     return () => clearInterval(interval)
-  }, [fetchTasks])
+  }, [fetchTasks, loadAgents])
 
   const resetForm = () => {
     setFormData({
       name: '',
+      description: '',
       agentId: '',
       sessionId: '',
       prompt: '',
@@ -80,6 +85,7 @@ export default function ScheduledTasks() {
       setEditingTask(task)
       setFormData({
         name: task.name,
+        description: task.description || '',
         agentId: task.agentId,
         sessionId: task.sessionId || '',
         prompt: task.prompt,
@@ -103,6 +109,7 @@ export default function ScheduledTasks() {
 
     const taskData = {
       name: formData.name,
+      description: formData.description || undefined,
       agentId: formData.agentId,
       agentName: agents.find((a) => a.id === formData.agentId)?.name,
       sessionId: formData.sessionId || undefined,
@@ -130,6 +137,11 @@ export default function ScheduledTasks() {
   }
 
   const getStatusIcon = (task: ScheduledTask) => {
+    // 检查是否有正在执行的运行
+    const hasRunning = task.results?.some(r => r.status === 'running')
+    if (hasRunning) {
+      return <Loader2 className="w-4 h-4 text-blue-500 animate-spin" />
+    }
     if (!task.enabled) {
       return <Pause className="w-4 h-4 text-gray-400" />
     }
@@ -154,6 +166,20 @@ export default function ScheduledTasks() {
     if (!ms) return '-'
     if (ms < 1000) return `${ms}ms`
     return `${(ms / 1000).toFixed(1)}s`
+  }
+
+  // 检查任务是否有正在执行的运行
+  const hasRunningExecution = (task: ScheduledTask): boolean => {
+    return task.results?.some(r => r.status === 'running') ?? false
+  }
+
+  // 处理执行任务
+  const handleRunTask = (task: ScheduledTask) => {
+    if (hasRunningExecution(task)) {
+      alert('该任务正在执行中，请等待完成后再试')
+      return
+    }
+    runTaskNow(task.id)
   }
 
   return (
@@ -220,11 +246,28 @@ export default function ScheduledTasks() {
                     {!task.enabled && (
                       <span className="px-2 py-0.5 bg-gray-100 text-gray-500 text-xs rounded-full">已暂停</span>
                     )}
+                    {hasRunningExecution(task) && (
+                      <span className="px-2 py-0.5 bg-blue-100 text-blue-600 text-xs rounded-full flex items-center gap-1">
+                        <Loader2 className="w-3 h-3 animate-spin" />
+                        执行中
+                      </span>
+                    )}
                   </div>
+                  {task.description && (
+                    <p className="text-sm text-gray-500 mt-0.5 truncate">{task.description}</p>
+                  )}
                   <div className="flex items-center gap-4 text-sm text-gray-500 mt-1">
-                    <span className="flex items-center gap-1">
-                      <Bot className="w-3.5 h-3.5" />
-                      {task.agentName || task.agentId}
+                    <span className="flex items-center gap-1.5">
+                      {agents.find(a => a.id === task.agentId)?.avatar ? (
+                        <span>{agents.find(a => a.id === task.agentId)?.avatar}</span>
+                      ) : (
+                        <Bot className="w-3.5 h-3.5" />
+                      )}
+                      <span
+                        className="w-2 h-2 rounded-full"
+                        style={{ backgroundColor: agents.find(a => a.id === task.agentId)?.color || '#9ca3af' }}
+                      />
+                      <span className="text-gray-700">{task.agentName || agents.find(a => a.id === task.agentId)?.name || task.agentId}</span>
                     </span>
                     <span>•</span>
                     <span>{scheduleTypeLabels[task.schedule.type]}</span>
@@ -236,6 +279,21 @@ export default function ScheduledTasks() {
                           : '等待中'
                         : '已暂停'}
                     </span>
+                    {task.totalRuns > 0 && (
+                      <>
+                        <span>•</span>
+                        <span className="flex items-center gap-1">
+                          <CheckCircle className="w-3.5 h-3.5 text-green-500" />
+                          {task.successRuns}
+                          {task.failRuns > 0 && (
+                            <>
+                              <XCircle className="w-3.5 h-3.5 text-red-500 ml-1" />
+                              {task.failRuns}
+                            </>
+                          )}
+                        </span>
+                      </>
+                    )}
                   </div>
                 </div>
 
@@ -265,12 +323,28 @@ export default function ScheduledTasks() {
                   <button
                     onClick={(e) => {
                       e.stopPropagation()
-                      runTaskNow(task.id)
+                      handleRunTask(task)
                     }}
-                    className="p-2 bg-blue-100 text-blue-600 hover:bg-blue-200 rounded-lg transition-colors"
-                    title="立即执行"
+                    disabled={hasRunningExecution(task)}
+                    className={cn(
+                      'flex items-center gap-1.5 px-3 py-2 rounded-lg transition-colors text-sm font-medium',
+                      hasRunningExecution(task)
+                        ? 'bg-blue-50 text-blue-600 cursor-not-allowed'
+                        : 'bg-blue-100 text-blue-600 hover:bg-blue-200'
+                    )}
+                    title={hasRunningExecution(task) ? '任务执行中...' : '立即执行'}
                   >
-                    <Play className="w-4 h-4" />
+                    {hasRunningExecution(task) ? (
+                      <>
+                        <Loader2 className="w-4 h-4 animate-spin" />
+                        <span>执行中</span>
+                      </>
+                    ) : (
+                      <>
+                        <Play className="w-4 h-4" />
+                        <span>执行</span>
+                      </>
+                    )}
                   </button>
 
                   <button
@@ -314,6 +388,12 @@ export default function ScheduledTasks() {
                       </pre>
                     </div>
                     <div className="space-y-2">
+                      {task.description && (
+                        <div>
+                          <span className="text-xs text-gray-500">描述</span>
+                          <p className="text-sm text-gray-900">{task.description}</p>
+                        </div>
+                      )}
                       <div>
                         <span className="text-xs text-gray-500">调度类型</span>
                         <p className="text-sm text-gray-900">{scheduleTypeLabels[task.schedule.type]}</p>
@@ -332,54 +412,38 @@ export default function ScheduledTasks() {
                         <span className="text-xs text-gray-500">创建时间</span>
                         <p className="text-sm text-gray-900">{formatTime(task.createdAt)}</p>
                       </div>
+                      {task.totalRuns > 0 && (
+                        <div>
+                          <span className="text-xs text-gray-500">执行统计</span>
+                          <div className="flex items-center gap-4 text-sm">
+                            <span className="flex items-center gap-1 text-green-600">
+                              <CheckCircle className="w-4 h-4" />
+                              成功: {task.successRuns}
+                            </span>
+                            {task.failRuns > 0 && (
+                              <span className="flex items-center gap-1 text-red-600">
+                                <XCircle className="w-4 h-4" />
+                                失败: {task.failRuns}
+                              </span>
+                            )}
+                            <span className="text-gray-500">
+                              成功率: {((task.successRuns / task.totalRuns) * 100).toFixed(1)}%
+                            </span>
+                          </div>
+                        </div>
+                      )}
                     </div>
                   </div>
 
-                  {/* Results Section */}
-                  <div>
-                    <button
-                      onClick={() => setShowResults(showResults === task.id ? null : task.id)}
-                      className="flex items-center gap-2 text-sm text-accio-600 hover:text-accio-700"
-                    >
-                      <Calendar className="w-4 h-4" />
-                      执行历史 ({task.results?.length || 0})
-                      {showResults === task.id ? <ChevronUp className="w-4 h-4" /> : <ChevronDown className="w-4 h-4" />}
-                    </button>
-
-                    {showResults === task.id && (
-                      <div className="mt-3 bg-white rounded-lg border border-gray-200 overflow-hidden">
-                        {task.results?.length === 0 ? (
-                          <div className="p-4 text-center text-gray-500 text-sm">暂无执行记录</div>
-                        ) : (
-                          <div className="divide-y divide-gray-100">
-                            {[...task.results].reverse().map((result) => (
-                              <div key={result.id} className="p-3 hover:bg-gray-50">
-                                <div className="flex items-center justify-between">
-                                  <div className="flex items-center gap-2">
-                                    {getResultIcon(result)}
-                                    <span className="text-sm text-gray-900">{formatTime(result.timestamp)}</span>
-                                    {result.duration && (
-                                      <span className="text-xs text-gray-500">({formatDuration(result.duration)})</span>
-                                    )}
-                                  </div>
-                                </div>
-                                {result.output && (
-                                  <pre className="mt-2 text-xs bg-gray-50 p-2 rounded overflow-auto max-h-40">
-                                    {result.output}
-                                  </pre>
-                                )}
-                                {result.error && (
-                                  <pre className="mt-2 text-xs bg-red-50 text-red-700 p-2 rounded overflow-auto max-h-40">
-                                    {result.error}
-                                  </pre>
-                                )}
-                              </div>
-                            ))}
-                          </div>
-                        )}
-                      </div>
-                    )}
-                  </div>
+                  {/* View Log Button */}
+                  <button
+                    onClick={() => navigate(`/scheduled-tasks/${task.id}/log`)}
+                    className="flex items-center gap-2 text-sm text-accio-600 hover:text-accio-700"
+                  >
+                    <Calendar className="w-4 h-4" />
+                    查看执行日志 ({task.results?.length || 0})
+                    <ChevronRight className="w-4 h-4" />
+                  </button>
                 </div>
               )}
             </div>
@@ -411,6 +475,18 @@ export default function ScheduledTasks() {
                 />
               </div>
 
+              {/* Description */}
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-2">任务描述 <span className="text-gray-400 font-normal">(可选)</span></label>
+                <input
+                  type="text"
+                  value={formData.description}
+                  onChange={(e) => setFormData({ ...formData, description: e.target.value })}
+                  className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-accio-500"
+                  placeholder="例如：每天早上9点自动生成市场趋势分析报告"
+                />
+              </div>
+
               {/* Agent Selection */}
               <div>
                 <label className="block text-sm font-medium text-gray-700 mb-2">所属智能体</label>
@@ -423,10 +499,25 @@ export default function ScheduledTasks() {
                   <option value="">请选择智能体</option>
                   {agents.map((agent) => (
                     <option key={agent.id} value={agent.id}>
-                      {agent.name} - {agent.role}
+                      {agent.avatar} {agent.name} · {agent.role}
                     </option>
                   ))}
                 </select>
+                {formData.agentId && (
+                  <div className="mt-2 flex items-center gap-2">
+                    {agents.find(a => a.id === formData.agentId) && (
+                      <>
+                        <span
+                          className="w-3 h-3 rounded-full"
+                          style={{ backgroundColor: agents.find(a => a.id === formData.agentId)?.color || '#3b82f6' }}
+                        />
+                        <span className="text-xs text-gray-500">
+                          {agents.find(a => a.id === formData.agentId)?.description?.slice(0, 50)}...
+                        </span>
+                      </>
+                    )}
+                  </div>
+                )}
               </div>
 
               {/* Session ID (optional) */}

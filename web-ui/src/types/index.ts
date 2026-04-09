@@ -8,6 +8,11 @@ export interface Agent {
   status: 'idle' | 'working' | 'error'
   model: string
   color: string
+  systemPrompt?: string
+  isActive?: boolean
+  isDefault?: boolean
+  createdAt?: Date
+  updatedAt?: Date
 }
 
 export interface Message {
@@ -36,8 +41,41 @@ export interface Skill {
   description: string
   icon: string
   category: string
-  isActive: boolean
-  config?: Record<string, unknown>
+  status: 'active' | 'inactive' | 'beta'
+  isBuiltIn: boolean
+
+  // 执行配置
+  executionType: 'builtin' | 'http' | 'mcp' | 'code' | 'proxy'
+  executionConfig?: Record<string, unknown>
+
+  // 参数定义
+  configSchema?: Record<string, unknown>
+
+  // 认证配置
+  authType: 'none' | 'api_key' | 'oauth2' | 'basic' | 'bearer'
+  authConfig?: Record<string, unknown>
+
+  // 高级设置
+  timeoutMs: number
+  retryPolicy?: {
+    maxRetries: number
+    backoffType: 'fixed' | 'exponential'
+    initialDelay: number
+  }
+  rateLimitPerMinute: number
+
+  // 统计
+  usage: number
+  successCount?: number
+  failCount?: number
+  avgExecutionMs?: number
+
+  // 文档
+  documentationUrl?: string
+  examples?: Record<string, unknown>[]
+
+  createdAt?: Date
+  updatedAt?: Date
 }
 
 export interface Task {
@@ -119,6 +157,7 @@ export interface TaskResult {
 export interface ScheduledTask {
   id: string
   name: string
+  description?: string
   agentId: string
   agentName?: string
   sessionId?: string
@@ -129,5 +168,63 @@ export interface ScheduledTask {
   updatedAt: Date
   lastRun?: Date
   nextRun?: Date
+  totalRuns: number
+  successRuns: number
+  failRuns: number
   results: TaskResult[]
+}
+
+// Settings Types
+export interface NotificationSettings {
+  email: boolean
+  push: boolean
+  sms: boolean
+  marketing: boolean
+}
+
+export interface SecuritySettings {
+  twoFactorEnabled: boolean
+}
+
+export interface SubscriptionInfo {
+  plan: 'free' | 'pro' | 'enterprise'
+  tokensLimit: number
+  tokensUsed: number
+  tokensResetAt?: Date
+}
+
+export interface UserSettings {
+  id: string
+  userId: string
+  displayName?: string
+  email?: string
+  phone?: string
+  region: string
+  avatarUrl?: string
+  notifications: NotificationSettings
+  security: SecuritySettings
+  subscription: SubscriptionInfo
+}
+
+export interface UserIntegration {
+  id: string
+  platform: string
+  platformName: string
+  icon: string
+  isConnected: boolean
+  storeUrl?: string
+  storeName?: string
+  metadata?: Record<string, unknown>
+  connectedAt?: Date
+}
+
+export interface TeamMember {
+  id: string
+  name: string
+  email: string
+  role: 'owner' | 'admin' | 'member'
+  avatar?: string
+  status: 'active' | 'pending' | 'inactive'
+  invitedAt: Date
+  joinedAt?: Date
 }

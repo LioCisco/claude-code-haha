@@ -3,8 +3,31 @@ import { exec } from 'child_process'
 import { promisify } from 'util'
 import { readFile, writeFile, readdir, stat } from 'fs/promises'
 import { glob } from 'glob'
+import { saveMessage, getSessionMessages, createSession, getSession, updateSessionTitle } from '../db'
 
 const execAsync = promisify(exec)
+
+// ================== Tool Formatting ==================
+function formatToolUse(name: string, input: Record<string, unknown>): string {
+  const icon =
+    name === 'bash' ? '🔧' :
+    name === 'read_file' ? '📄' :
+    name === 'write_file' ? '✍️' :
+    name === 'edit_file' ? '✏️' :
+    name === 'glob' ? '📂' :
+    name === 'grep' ? '🔍' :
+    name === 'web_fetch' ? '🌐' :
+    name === 'web_search' ? '🔎' :
+    '🛠️'
+  const lines = Object.entries(input).map(([k, v]) => `${k}: ${typeof v === 'string' ? v : JSON.stringify(v)}`)
+  return `${icon} 调用工具 **${name}**\n\`\`\`\n${lines.join('\n')}\n\`\`\``
+}
+
+function formatToolResult(name: string, result: string, isError?: boolean): string {
+  const prefix = isError ? '❌ 工具执行失败' : '✅ 工具执行完成'
+  const truncated = result.length > 800 ? result.slice(0, 800) + '\n... [truncated]' : result
+  return `${prefix} (${name}):\n\`\`\`\n${truncated}\n\`\`\``
+}
 
 // ================== Types ==================
 export type PermissionRequest = {
@@ -254,11 +277,15 @@ export class ClaudeSession {
   private pendingPermission: PendingPermission | null = null
   private pendingQuestion: { resolve: (answer: string) => void } | null = null
   private maxTurns = 20
+  private sessionId: string
+  private dbEnabled: boolean
 
   constructor(options: {
     apiKey: string
     baseURL?: string
     model?: string
+    sessionId: string
+    dbEnabled?: boolean
     onEvent: (event: ChatEvent) => void | Promise<void>
   }) {
     this.anthropic = new Anthropic({
@@ -266,22 +293,122 @@ export class ClaudeSession {
       baseURL: options.baseURL,
     })
     this.model = options.model || 'kimi-k2.5'
+    this.sessionId = options.sessionId
+    this.dbEnabled = options.dbEnabled ?? false
     this.onEvent = options.onEvent
+  }
+
+  getSessionId() {
+    return this.sessionId
+  }
+
+  async loadHistoryFromDB() {
+    if (!this.dbEnabled) return
+
+    try {
+      const dbMessages = await getSessionMessages(this.sessionId, 50)
+
+      // Convert DB messages to Anthropic format
+      for (const msg of dbMessages) {
+        if (msg.role === 'user') {
+          this.messages.push({ role: 'user', content: msg.content })
+        } else if (msg.role === 'assistant' || msg.role === 'agent') {
+          this.messages.push({ role: 'assistant', content: msg.content })
+        }
+        // System/tool messages are handled separately
+      }
+
+      console.log(`[ClaudeSession] Loaded ${dbMessages.length} messages from DB for session ${this.sessionId}`)
+    } catch (err) {
+      console.error('[ClaudeSession] Failed to load history from DB:', err)
+    }
+  }
+
+  private async saveMessageToDB(message: {
+    role: 'user' | 'assistant' | 'system' | 'agent'
+    content: string
+    agentId?: string
+    agentName?: string
+    agentAvatar?: string
+    toolName?: string
+    toolInput?: Record<string, unknown>
+    toolResult?: string
+    isError?: boolean
+  }) {
+    if (!this.dbEnabled) return
+
+    try {
+      // Ensure toolInput is properly serialized to JSON string
+      const serializedMessage = {
+        ...message,
+        toolInput: message.toolInput ? JSON.stringify(message.toolInput) : undefined
+      }
+      await saveMessage({
+        sessionId: this.sessionId,
+        ...serializedMessage,
+      })
+    } catch (err) {
+      console.error('[ClaudeSession] Failed to save message to DB:', err)
+    }
   }
 
   getMessages() {
     return this.messages
   }
 
-  async submitUserMessage(content: string, systemPrompt?: string) {
+  async submitUserMessage(content: string, systemPrompt?: string, agentInfo?: { agentId?: string; agentName?: string; agentAvatar?: string }) {
     console.log('[ClaudeSession] submitUserMessage:', content.slice(0, 100))
+
+    // Check if this is the first user message (for title generation)
+    const isFirstMessage = this.messages.filter(m => m.role === 'user').length === 0
+
+    // Add to memory
     this.messages.push({ role: 'user', content })
+
+    // Save to database
+    await this.saveMessageToDB({
+      role: 'user',
+      content,
+      agentId: agentInfo?.agentId,
+      agentName: agentInfo?.agentName,
+      agentAvatar: agentInfo?.agentAvatar,
+    })
+
+    // Generate title if this is the first message
+    if (isFirstMessage && this.dbEnabled) {
+      this.generateTitle(content).catch(err => {
+        console.error('[ClaudeSession] Failed to generate title:', err)
+      })
+    }
+
     try {
-      await this.runLoop(systemPrompt)
+      await this.runLoop(systemPrompt, agentInfo)
     } catch (err) {
       console.error('[ClaudeSession] submitUserMessage error:', err)
       const msg = err instanceof Error ? err.message : String(err)
       await this.onEvent({ type: 'error', message: `处理失败: ${msg}` })
+    }
+  }
+
+  private async generateTitle(content: string) {
+    try {
+      // Use a simple heuristic to generate title from first message
+      // For Chinese content, extract key nouns/phrases
+      let title = content.trim()
+
+      // Limit length (max 20 chars)
+      if (title.length > 20) {
+        title = title.substring(0, 20) + '...'
+      }
+
+      // Update database
+      await updateSessionTitle(this.sessionId, title)
+      console.log(`[ClaudeSession] Generated title for session ${this.sessionId}: ${title}`)
+
+      // Notify frontend
+      await this.onEvent({ type: 'title_updated', title } as any)
+    } catch (err) {
+      console.error('[ClaudeSession] Error generating title:', err)
     }
   }
 
@@ -299,7 +426,7 @@ export class ClaudeSession {
     }
   }
 
-  private async runLoop(systemPrompt?: string) {
+  private async runLoop(systemPrompt?: string, agentInfo?: { agentId?: string; agentName?: string; agentAvatar?: string }) {
     try {
       for (let turn = 0; turn < this.maxTurns; turn++) {
         console.log(`[ClaudeSession] Turn ${turn + 1}, calling API...`)
@@ -329,7 +456,21 @@ export class ClaudeSession {
           content: response.content,
         })
 
+        // Extract text content and save to DB
         const textBlocks = response.content.filter((c) => c.type === 'text')
+        const fullText = textBlocks.map((c) => c.text).join('')
+
+        // Save assistant message to database
+        if (fullText) {
+          await this.saveMessageToDB({
+            role: 'assistant',
+            content: fullText,
+            agentId: agentInfo?.agentId,
+            agentName: agentInfo?.agentName,
+            agentAvatar: agentInfo?.agentAvatar,
+          })
+        }
+
         for (const block of textBlocks) {
           await this.onEvent({ type: 'assistant_text', text: block.text })
         }
@@ -351,6 +492,17 @@ export class ClaudeSession {
             input: toolUse.input as Record<string, unknown>,
           })
 
+          // Save tool use to database (formatted same as frontend)
+          await this.saveMessageToDB({
+            role: 'system',
+            content: formatToolUse(toolUse.name, toolUse.input as Record<string, unknown>),
+            agentId: agentInfo?.agentId,
+            agentName: agentInfo?.agentName,
+            agentAvatar: agentInfo?.agentAvatar,
+            toolName: toolUse.name,
+            toolInput: toolUse.input as Record<string, unknown>,
+          })
+
           const result = await this.executeTool(
             toolUse.name,
             toolUse.input as Record<string, unknown>
@@ -361,6 +513,18 @@ export class ClaudeSession {
             tool_use_id: toolUse.id,
             content: result.result,
             is_error: result.isError,
+          })
+
+          // Save tool result to database (formatted same as frontend)
+          await this.saveMessageToDB({
+            role: 'system',
+            content: formatToolResult(toolUse.name, result.result, result.isError),
+            agentId: agentInfo?.agentId,
+            agentName: agentInfo?.agentName,
+            agentAvatar: agentInfo?.agentAvatar,
+            toolName: toolUse.name,
+            toolResult: result.result,
+            isError: result.isError,
           })
         }
 
