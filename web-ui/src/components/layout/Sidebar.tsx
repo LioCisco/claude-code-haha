@@ -10,6 +10,7 @@ import {
   Sparkles,
   Zap,
   Clock,
+  GitBranch,
 } from 'lucide-react'
 import { cn } from '@/lib/utils'
 
@@ -18,6 +19,7 @@ const navigation = [
   { name: '智能对话', to: '/chat', icon: MessageSquare },
   { name: 'AI 团队', to: '/agents', icon: Bot },
   { name: '技能库', to: '/skills', icon: Wrench },
+  { name: '工作流', to: '/workflows', icon: GitBranch },
   { name: '店铺搭建', to: '/store-builder', icon: Store },
   { name: '数据分析', to: '/analytics', icon: BarChart3 },
   { name: '定时任务', to: '/scheduled-tasks', icon: Clock },

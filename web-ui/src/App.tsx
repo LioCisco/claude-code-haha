@@ -10,6 +10,8 @@ import Settings from './pages/Settings'
 import Onboarding from './pages/Onboarding'
 import ScheduledTasks from './pages/ScheduledTasks'
 import TaskExecutionLog from './pages/TaskExecutionLog'
+import WorkflowList from './pages/workflow/WorkflowList'
+import WorkflowEditor from './pages/workflow/WorkflowEditor'
 import Login from './pages/Login'
 import ProtectedRoute from './components/auth/ProtectedRoute'
 
@@ -27,6 +29,8 @@ function App() {
         <Route path="analytics" element={<Analytics />} />
         <Route path="scheduled-tasks" element={<ScheduledTasks />} />
         <Route path="scheduled-tasks/:taskId/log" element={<TaskExecutionLog />} />
+        <Route path="workflows" element={<WorkflowList />} />
+        <Route path="workflow/:id" element={<WorkflowEditor />} />
         <Route path="settings" element={<Settings />} />
       </Route>
     </Routes>

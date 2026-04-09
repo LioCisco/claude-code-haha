@@ -367,7 +367,7 @@ export default function Skills() {
           )}
         >
           <Zap className="w-4 h-4" />
-          Web-UI 技能
+          平台技能
           <span className="ml-1 px-1.5 py-0.5 bg-gray-100 text-gray-600 text-xs rounded-full">
             {webUiSkills.length}
           </span>
@@ -386,7 +386,7 @@ export default function Skills() {
           )}
         >
           <Code2 className="w-4 h-4" />
-          Claude Code 技能
+          内置技能库
           <span className="ml-1 px-1.5 py-0.5 bg-gray-100 text-gray-600 text-xs rounded-full">
             {claudeCodeSkills.length}
           </span>
@@ -432,7 +432,7 @@ export default function Skills() {
           <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-400" />
           <input
             type="text"
-            placeholder={activeTab === 'webui' ? "搜索技能..." : "搜索 Claude Code 技能..."}
+            placeholder={activeTab === 'webui' ? "搜索技能..." : "搜索内置技能..."}
             value={searchQuery}
             onChange={(e) => setSearchQuery(e.target.value)}
             className="w-full pl-10 pr-4 py-2 border border-gray-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-accio-500"
@@ -498,7 +498,7 @@ export default function Skills() {
                   <span>已使用 {skill.usage} 次</span>
                   <div className="flex items-center gap-2">
                     {skill.status === 'active' && (
-                      <span className="flex items-center gap-1 text-xs text-accio-600" title="可在 Claude Code 中使用">
+                      <span className="flex items-center gap-1 text-xs text-accio-600" title="可在终端中使用">
                         <Terminal className="w-3 h-3" />
                         Claude
                       </span>
@@ -570,8 +570,8 @@ export default function Skills() {
       {activeTab === 'claudecode' && filteredClaudeCodeSkills.length === 0 && !isLoading && (
         <div className="text-center py-12">
           <Code2 className="w-12 h-12 text-gray-300 mx-auto mb-4" />
-          <h3 className="text-lg font-medium text-gray-900 mb-2">暂无 Claude Code 技能</h3>
-          <p className="text-gray-500">无法从 Claude Code 源码中解析到技能</p>
+          <h3 className="text-lg font-medium text-gray-900 mb-2">暂无内置技能</h3>
+          <p className="text-gray-500">无法从源码中解析到技能</p>
         </div>
       )}
 
@@ -634,7 +634,7 @@ export default function Skills() {
                 <div className="border border-accio-200 bg-accio-50/50 rounded-lg p-4">
                   <h4 className="text-sm font-medium text-accio-800 mb-2 flex items-center gap-2">
                     <Terminal className="w-4 h-4" />
-                    Claude Code 集成
+                    终端集成
                   </h4>
                   <p className="text-xs text-accio-700 mb-3">
                     此技能已同步到 Claude Code 技能库，可在终端中直接使用技能命令调用：
@@ -838,10 +838,10 @@ export default function Skills() {
               <div className="border border-blue-200 bg-blue-50/50 rounded-lg p-4">
                 <h4 className="text-sm font-medium text-blue-800 mb-2 flex items-center gap-2">
                   <Terminal className="w-4 h-4" />
-                  在 Claude Code 中使用
+                  在终端中使用
                 </h4>
                 <p className="text-xs text-blue-700 mb-3">
-                  此技能是 Claude Code 内置技能，可在终端中使用以下命令调用：
+                  此技能是内置技能，可在终端中使用以下命令调用：
                 </p>
                 <div className="bg-white rounded p-3 font-mono text-xs text-gray-700 space-y-1">
                   <code>/{selectedClaudeSkill.name}</code>

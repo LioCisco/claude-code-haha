@@ -31,7 +31,20 @@
       "Bash(curl -s -X POST http://localhost:8080/api/auth/send-phone-code -H 'Content-Type: application/json' -d '{\"phone\": \"13800138000\", \"type\": \"register\"}')",
       "Read(//private/tmp/**)",
       "Bash(mysql -h localhost -u root -p123456 kane-work -e \"SELECT code FROM verification_codes WHERE phone = '13800138000' AND is_used = false ORDER BY created_at DESC LIMIT 1;\")",
-      "Bash(curl:*)"
+      "Bash(curl:*)",
+      "Bash(sed -i '' \"s|from '@/types'|from '../types/workflow'|g\" nodes/*.ts)",
+      "Bash(sed -i '' \"s|from '@/utils/template'|from '../lib/template'|g\" nodes/*.ts)",
+      "Bash(sed -i '' \"s|from '@/utils/sandbox'|from '../lib/sandbox'|g\" nodes/*.ts)",
+      "Bash(sed -i '' \"s|from '@/types'|from '@/types/workflow'|g\" *.tsx)",
+      "Bash(sed -i '' \"s|from '@/types/workflow'|from '../../types/workflow'|g\" *.tsx)",
+      "Bash(grep -l \"from.*types\" *.tsx)",
+      "Bash(xargs -I {} sed -i '' \"s|from '@/types/workflow'|from '@/types/workflow'|g\" {})",
+      "Bash(sed -i '' \"s|from '../../types/workflow'|from '@/types/workflow'|g\" *.tsx)",
+      "Bash(sed -i '' \"s|from '../types'|from '@/types/workflow'|g\" *.tsx)",
+      "Bash(sed -i '' \"s|from '../utils/template'|from '../lib/template'|g\" *.ts)",
+      "Bash(sed -i '' \"s|from '../utils/sandbox'|from '../lib/sandbox'|g\" *.ts)",
+      "Bash(1)",
+      "Bash(grep -E \"port.*5173|server.*port\" vite.config.*)"
     ]
   }
 }

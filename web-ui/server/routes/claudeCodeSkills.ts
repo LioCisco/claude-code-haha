@@ -1,4 +1,4 @@
-import { Elysia } from 'elysia'
+import { Elysia, t } from 'elysia'
 import { readFile, readdir } from 'fs/promises'
 import { join, basename, extname } from 'path'
 
@@ -229,6 +229,36 @@ export const claudeCodeSkillsRoutes = new Elysia({ prefix: '/api/claude-skills' 
     }
   })
 
+  // 执行内置技能
+  .post('/:id/execute', async ({ params, body, set }) => {
+    try {
+      const skills = await getClaudeCodeSkills()
+      const skill = skills.find((s) => s.id === params.id)
+
+      if (!skill) {
+        set.status = 404
+        return { success: false, message: 'Skill not found' }
+      }
+
+      const result = await executeClaudeSkill(skill, body || {})
+
+      return {
+        success: true,
+        result,
+        skill: {
+          id: skill.id,
+          name: skill.name,
+          description: skill.description,
+        },
+      }
+    } catch (err) {
+      set.status = 400
+      return { success: false, message: (err as Error).message }
+    }
+  }, {
+    body: t.Optional(t.Record(t.String(), t.Any()))
+  })
+
 function getCategoryLabel(category: string): string {
   const labels: Record<string, string> = {
     git: 'Git 版本控制',
@@ -241,4 +271,19 @@ function getCategoryLabel(category: string): string {
     other: '其他',
   }
   return labels[category] || category
+}
+
+// 模拟执行内置技能
+async function executeClaudeSkill(skill: ClaudeCodeSkill, params: any): Promise<any> {
+  // 由于内置技能是通过 Claude Code CLI 执行的
+  // 这里返回一个模拟结果或提示信息
+  // 实际实现需要集成 Claude Code CLI 调用
+
+  return {
+    success: true,
+    message: `技能 /${skill.name} 已触发`,
+    params,
+    note: '内置技能需要通过 Claude Code CLI 执行，请在工作流执行环境中配置 CLI 访问',
+    command: `claude ${skill.name}`,
+  }
 }

@@ -1,4 +1,5 @@
 import type { Skill } from '@/types'
+import { apiClient } from '@/lib/api'
 
 export interface SkillInput {
   name: string
@@ -31,9 +32,9 @@ export interface ApiResponse<T> {
 
 // Get all skills
 export async function getSkills(category?: string): Promise<Skill[]> {
-  const url = category ? `/api/skills?category=${category}` : '/api/skills'
-  const res = await fetch(url)
-  const data: ApiResponse<Skill> = await res.json()
+  const data = await apiClient.get<ApiResponse<Skill>>('/api/skills', {
+    params: category ? { category } : undefined,
+  })
   if (!data.success) {
     throw new Error(data.message || 'Failed to fetch skills')
   }
@@ -42,8 +43,7 @@ export async function getSkills(category?: string): Promise<Skill[]> {
 
 // Get single skill by ID
 export async function getSkill(id: string): Promise<Skill> {
-  const res = await fetch(`/api/skills/${id}`)
-  const data: ApiResponse<Skill> = await res.json()
+  const data = await apiClient.get<ApiResponse<Skill>>(`/api/skills/${id}`)
   if (!data.success || !data.skill) {
     throw new Error(data.message || 'Skill not found')
   }
@@ -61,12 +61,10 @@ export async function executeSkill(
   result: unknown
   durationMs?: number
 }> {
-  const res = await fetch(`/api/skills/${id}/execute`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ params, ...options }),
+  const data = await apiClient.post(`/api/skills/${id}/execute`, {
+    params,
+    ...options,
   })
-  const data = await res.json()
   if (!data.success) {
     throw new Error(data.message || 'Failed to execute skill')
   }
@@ -78,12 +76,7 @@ export async function updateSkill(
   id: string,
   input: Partial<SkillInput>
 ): Promise<Skill> {
-  const res = await fetch(`/api/skills/${id}`, {
-    method: 'PUT',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(input),
-  })
-  const data: ApiResponse<Skill> = await res.json()
+  const data = await apiClient.put<ApiResponse<Skill>>(`/api/skills/${id}`, input)
   if (!data.success || !data.skill) {
     throw new Error(data.message || 'Failed to update skill')
   }
@@ -92,12 +85,7 @@ export async function updateSkill(
 
 // Install new skill
 export async function installSkill(input: SkillInput): Promise<Skill> {
-  const res = await fetch('/api/skills/install', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(input),
-  })
-  const data: ApiResponse<Skill> = await res.json()
+  const data = await apiClient.post<ApiResponse<Skill>>('/api/skills/install', input)
   if (!data.success || !data.skill) {
     throw new Error(data.message || 'Failed to install skill')
   }

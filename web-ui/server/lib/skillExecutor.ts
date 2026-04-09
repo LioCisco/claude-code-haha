@@ -348,6 +348,45 @@ export async function executeSkill(
   }
 }
 
+// 导入库存报告生成器
+import { generateInventoryReport } from '../routes/inventory'
+
+// 注册库存检查内置处理器
+registerBuiltinHandler('inventory-check', async (params: any) => {
+  const report = generateInventoryReport()
+  
+  // 生成简化的检查摘要
+  const summary = {
+    totalProducts: report.summary.totalProducts,
+    criticalCount: report.summary.criticalCount,
+    lowCount: report.summary.lowCount,
+    normalCount: report.summary.normalCount,
+    urgentItems: report.critical.map((item: any) => ({
+      name: item.name,
+      sku: item.sku,
+      currentStock: item.currentStock,
+      suggestedReorder: item.suggestedReorder,
+      estimatedDaysRemaining: item.estimatedDaysRemaining
+    })),
+    lowItems: report.low.map((item: any) => ({
+      name: item.name,
+      sku: item.sku,
+      currentStock: item.currentStock,
+      suggestedReorder: item.suggestedReorder,
+      estimatedDaysRemaining: item.estimatedDaysRemaining
+    })),
+    totalReorderCost: report.summary.estimatedReorderCost,
+    recommendations: report.recommendations
+  }
+  
+  return {
+    success: true,
+    summary,
+    fullReport: report,
+    message: `库存检查完成：发现 ${report.summary.criticalCount} 个库存告急商品，${report.summary.lowCount} 个库存不足商品，建议补货总成本 ¥${report.summary.estimatedReorderCost.toLocaleString()}`
+  }
+})
+
 // 注册社交发布内置处理器
 registerBuiltinHandler('social-post', async (params: any) => {
   const { platform, topic, style, needImage, needVideo } = params

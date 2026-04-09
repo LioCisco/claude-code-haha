@@ -322,3 +322,6 @@ export interface SalesQueryParams {
   end_date?: string
   group_by?: 'day' | 'week' | 'month'
 }
+
+// ==================== 工作流相关类型 ====================
+export * from './workflow';

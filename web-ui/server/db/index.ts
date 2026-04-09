@@ -1067,3 +1067,297 @@ export async function deleteTeamMember(memberId: string, ownerId: string): Promi
   )
   return result.affectedRows > 0
 }
+
+// ==================== Workflow Functions ====================
+
+export interface WorkflowDB {
+  id: string
+  user_id: string
+  name: string
+  description: string | null
+  version: string
+  nodes: any[]
+  edges: any[]
+  variables: any[]
+  status: 'draft' | 'active' | 'disabled'
+  is_public: boolean
+  execution_count: number
+  last_execution_at: Date | null
+  created_at: Date
+  updated_at: Date
+}
+
+export interface WorkflowExecutionDB {
+  id: string
+  workflow_id: string
+  user_id: string
+  run_id: string
+  status: 'pending' | 'running' | 'success' | 'error' | 'cancelled'
+  input: any
+  output: any
+  error_message: string | null
+  steps: any[]
+  variables: any
+  started_at: Date | null
+  ended_at: Date | null
+  duration_ms: number | null
+  created_at: Date
+}
+
+// Get all workflows for user
+export async function getUserWorkflows(userId: string): Promise<WorkflowDB[]> {
+  return await query<WorkflowDB>(
+    'SELECT * FROM workflows WHERE user_id = ? ORDER BY updated_at DESC',
+    [userId]
+  )
+}
+
+// Get workflow by ID
+export async function getWorkflowById(workflowId: string, userId?: string): Promise<WorkflowDB | null> {
+  const sql = userId
+    ? 'SELECT * FROM workflows WHERE id = ? AND (user_id = ? OR is_public = TRUE)'
+    : 'SELECT * FROM workflows WHERE id = ? AND is_public = TRUE'
+  const params = userId ? [workflowId, userId] : [workflowId]
+  return await queryOne<WorkflowDB>(sql, params)
+}
+
+// Create workflow
+export async function createWorkflow(data: {
+  id: string
+  userId: string
+  name: string
+  description?: string
+  nodes: any[]
+  edges: any[]
+  variables?: any[]
+}): Promise<void> {
+  await execute(
+    `INSERT INTO workflows (id, user_id, name, description, nodes, edges, variables)
+     VALUES (?, ?, ?, ?, ?, ?, ?)`,
+    [
+      data.id,
+      data.userId,
+      data.name,
+      data.description || null,
+      JSON.stringify(data.nodes),
+      JSON.stringify(data.edges),
+      JSON.stringify(data.variables || [])
+    ]
+  )
+}
+
+// Update workflow
+export async function updateWorkflow(
+  workflowId: string,
+  userId: string,
+  updates: Partial<{
+    name: string
+    description: string
+    nodes: any[]
+    edges: any[]
+    variables: any[]
+    status: 'draft' | 'active' | 'disabled'
+    isPublic: boolean
+    version: string
+  }>
+): Promise<boolean> {
+  const fields: string[] = []
+  const values: any[] = []
+
+  if (updates.name !== undefined) {
+    fields.push('name = ?')
+    values.push(updates.name)
+  }
+  if (updates.description !== undefined) {
+    fields.push('description = ?')
+    values.push(updates.description)
+  }
+  if (updates.nodes !== undefined) {
+    fields.push('nodes = ?')
+    values.push(JSON.stringify(updates.nodes))
+  }
+  if (updates.edges !== undefined) {
+    fields.push('edges = ?')
+    values.push(JSON.stringify(updates.edges))
+  }
+  if (updates.variables !== undefined) {
+    fields.push('variables = ?')
+    values.push(JSON.stringify(updates.variables))
+  }
+  if (updates.status !== undefined) {
+    fields.push('status = ?')
+    values.push(updates.status)
+  }
+  if (updates.is_public !== undefined) {
+    fields.push('is_public = ?')
+    values.push(updates.is_public)
+  }
+  if (updates.version !== undefined) {
+    fields.push('version = ?')
+    values.push(updates.version)
+  }
+
+  if (fields.length === 0) return true
+
+  fields.push('updated_at = NOW()')
+  values.push(workflowId, userId)
+
+  const result = await execute(
+    `UPDATE workflows SET ${fields.join(', ')} WHERE id = ? AND user_id = ?`,
+    values
+  )
+  return result.affectedRows > 0
+}
+
+// Delete workflow
+export async function deleteWorkflow(workflowId: string, userId: string): Promise<boolean> {
+  const result = await execute(
+    'DELETE FROM workflows WHERE id = ? AND user_id = ?',
+    [workflowId, userId]
+  )
+  return result.affectedRows > 0
+}
+
+// Increment execution count
+export async function incrementWorkflowExecutionCount(workflowId: string): Promise<void> {
+  await execute(
+    'UPDATE workflows SET execution_count = execution_count + 1, last_execution_at = NOW() WHERE id = ?',
+    [workflowId]
+  )
+}
+
+// Create execution record
+export async function createExecutionRecord(data: {
+  id: string
+  workflowId: string
+  userId: string
+  runId: string
+  input?: any
+}): Promise<void> {
+  await execute(
+    `INSERT INTO workflow_executions (id, workflow_id, user_id, run_id, input, status, started_at)
+     VALUES (?, ?, ?, ?, ?, 'pending', NOW())`,
+    [data.id, data.workflowId, data.userId, data.runId, data.input ? JSON.stringify(data.input) : null]
+  )
+}
+
+// Update execution status
+export async function updateExecutionStatus(
+  executionId: string,
+  updates: {
+    status?: 'pending' | 'running' | 'success' | 'error' | 'cancelled'
+    output?: any
+    errorMessage?: string
+    steps?: any[]
+    variables?: any
+    endedAt?: Date
+    durationMs?: number
+  }
+): Promise<void> {
+  const fields: string[] = []
+  const values: any[] = []
+
+  if (updates.status !== undefined) {
+    fields.push('status = ?')
+    values.push(updates.status)
+  }
+  if (updates.output !== undefined) {
+    fields.push('output = ?')
+    values.push(JSON.stringify(updates.output))
+  }
+  if (updates.errorMessage !== undefined) {
+    fields.push('error_message = ?')
+    values.push(updates.errorMessage)
+  }
+  if (updates.steps !== undefined) {
+    fields.push('steps = ?')
+    values.push(JSON.stringify(updates.steps))
+  }
+  if (updates.variables !== undefined) {
+    fields.push('variables = ?')
+    values.push(JSON.stringify(updates.variables))
+  }
+  if (updates.endedAt !== undefined) {
+    fields.push('ended_at = ?')
+    values.push(updates.endedAt)
+  }
+  if (updates.durationMs !== undefined) {
+    fields.push('duration_ms = ?')
+    values.push(updates.durationMs)
+  }
+
+  if (fields.length === 0) return
+
+  values.push(executionId)
+  await execute(
+    `UPDATE workflow_executions SET ${fields.join(', ')} WHERE id = ?`,
+    values
+  )
+}
+
+// Get execution records
+export async function getWorkflowExecutions(
+  workflowId: string,
+  limit: number = 50
+): Promise<WorkflowExecutionDB[]> {
+  return await query<WorkflowExecutionDB>(
+    `SELECT * FROM workflow_executions
+     WHERE workflow_id = ?
+     ORDER BY created_at DESC
+     LIMIT ${parseInt(String(limit))}`,
+    [workflowId]
+  )
+}
+
+// Publish History Types
+export interface WorkflowPublishHistoryDB {
+  id: string
+  workflow_id: string
+  user_id: string
+  version: string
+  changes: string | null
+  nodes: any[]
+  edges: any[]
+  variables: any[]
+  published_at: Date
+}
+
+// Create publish record
+export async function createPublishRecord(data: {
+  id: string
+  workflowId: string
+  userId: string
+  version: string
+  changes?: string
+  nodes: any[]
+  edges: any[]
+  variables: any[]
+}): Promise<void> {
+  await execute(
+    `INSERT INTO workflow_publish_history
+     (id, workflow_id, user_id, version, changes, nodes, edges, variables, published_at)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, NOW())`,
+    [
+      data.id,
+      data.workflowId,
+      data.userId,
+      data.version,
+      data.changes || null,
+      JSON.stringify(data.nodes),
+      JSON.stringify(data.edges),
+      JSON.stringify(data.variables),
+    ]
+  )
+}
+
+// Get publish history
+export async function getPublishHistory(workflowId: string): Promise<WorkflowPublishHistoryDB[]> {
+  return await query<WorkflowPublishHistoryDB>(
+    `SELECT h.*, u.username as published_by
+     FROM workflow_publish_history h
+     LEFT JOIN local_users u ON h.user_id = u.id
+     WHERE h.workflow_id = ?
+     ORDER BY h.published_at DESC`,
+    [workflowId]
+  )
+}

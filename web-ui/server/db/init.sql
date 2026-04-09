@@ -538,3 +538,168 @@ INSERT IGNORE INTO team_members (id, owner_id, name, email, role, avatar, status
 ('tm-owner', 'default-user', '商家用户', 'owner@example.com', 'owner', '商', 'active'),
 ('tm-admin', 'default-user', '运营专员', 'ops@example.com', 'admin', '运', 'active'),
 ('tm-member', 'default-user', '选品助理', 'buyer@example.com', 'member', '选', 'active');
+
+-- ============================================
+-- 工作流系统表
+-- ============================================
+
+-- 工作流定义表
+CREATE TABLE IF NOT EXISTS workflows (
+    id VARCHAR(36) PRIMARY KEY,
+    user_id VARCHAR(36) NOT NULL,
+    name VARCHAR(200) NOT NULL COMMENT '工作流名称',
+    description TEXT COMMENT '工作流描述',
+    version VARCHAR(20) DEFAULT '1.0.0' COMMENT '版本号',
+
+    -- 工作流定义 (JSON)
+    nodes JSON NOT NULL COMMENT '节点列表',
+    edges JSON NOT NULL COMMENT '边列表',
+    variables JSON COMMENT '变量定义',
+
+    -- 状态
+    status ENUM('draft', 'active', 'disabled') DEFAULT 'draft' COMMENT '状态',
+    is_public BOOLEAN DEFAULT FALSE COMMENT '是否公开',
+
+    -- 统计
+    execution_count INT DEFAULT 0 COMMENT '执行次数',
+    last_execution_at TIMESTAMP NULL COMMENT '上次执行时间',
+
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+
+    INDEX idx_user_id (user_id),
+    INDEX idx_status (status),
+    INDEX idx_created_at (created_at),
+    FOREIGN KEY (user_id) REFERENCES local_users(id) ON DELETE CASCADE
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='工作流定义表';
+
+-- 工作流执行记录表
+CREATE TABLE IF NOT EXISTS workflow_executions (
+    id VARCHAR(36) PRIMARY KEY,
+    workflow_id VARCHAR(36) NOT NULL COMMENT '工作流ID',
+    user_id VARCHAR(36) NOT NULL COMMENT '执行用户ID',
+    run_id VARCHAR(36) NOT NULL COMMENT '运行ID',
+
+    -- 执行状态
+    status ENUM('pending', 'running', 'success', 'error', 'cancelled') DEFAULT 'pending' COMMENT '执行状态',
+
+    -- 输入输出
+    input JSON COMMENT '执行输入',
+    output JSON COMMENT '执行输出',
+    error_message TEXT COMMENT '错误信息',
+
+    -- 执行详情
+    steps JSON COMMENT '执行步骤详情',
+    variables JSON COMMENT '执行时的变量快照',
+
+    -- 性能统计
+    started_at TIMESTAMP NULL COMMENT '开始时间',
+    ended_at TIMESTAMP NULL COMMENT '结束时间',
+    duration_ms INT COMMENT '执行耗时(毫秒)',
+
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+
+    INDEX idx_workflow_id (workflow_id),
+    INDEX idx_user_id (user_id),
+    INDEX idx_status (status),
+    INDEX idx_created_at (created_at),
+    FOREIGN KEY (workflow_id) REFERENCES workflows(id) ON DELETE CASCADE,
+    FOREIGN KEY (user_id) REFERENCES local_users(id) ON DELETE CASCADE
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='工作流执行记录表';
+
+-- 知识库表 (RAG 使用)
+CREATE TABLE IF NOT EXISTS knowledge_bases (
+    id VARCHAR(36) PRIMARY KEY,
+    user_id VARCHAR(36) NOT NULL COMMENT '用户ID',
+    name VARCHAR(200) NOT NULL COMMENT '知识库名称',
+    description TEXT COMMENT '知识库描述',
+
+    -- 嵌入模型配置
+    embedding_model VARCHAR(100) DEFAULT 'text-embedding-3-small' COMMENT '嵌入模型',
+    embedding_dimension INT DEFAULT 1536 COMMENT '向量维度',
+
+    -- 统计
+    document_count INT DEFAULT 0 COMMENT '文档数量',
+    total_tokens INT DEFAULT 0 COMMENT '总Token数',
+
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+
+    INDEX idx_user_id (user_id),
+    FOREIGN KEY (user_id) REFERENCES local_users(id) ON DELETE CASCADE
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='知识库表';
+
+-- 知识库文档表
+CREATE TABLE IF NOT EXISTS knowledge_documents (
+    id VARCHAR(36) PRIMARY KEY,
+    knowledge_base_id VARCHAR(36) NOT NULL COMMENT '知识库ID',
+
+    -- 文档内容
+    title VARCHAR(500) COMMENT '文档标题',
+    content TEXT NOT NULL COMMENT '文档内容',
+    content_type VARCHAR(50) DEFAULT 'text' COMMENT '内容类型: text, markdown, html',
+
+    -- 元数据
+    source VARCHAR(500) COMMENT '来源URL或文件路径',
+    metadata JSON COMMENT '额外元数据',
+
+    -- 向量 (简化存储，实际可用向量数据库)
+    embedding JSON COMMENT '向量数据',
+
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+
+    INDEX idx_kb_id (knowledge_base_id),
+    FULLTEXT INDEX idx_content (content) COMMENT '全文索引',
+    FOREIGN KEY (knowledge_base_id) REFERENCES knowledge_bases(id) ON DELETE CASCADE
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='知识库文档表';
+
+-- MCP 服务配置表
+CREATE TABLE IF NOT EXISTS mcp_servers (
+    id VARCHAR(36) PRIMARY KEY,
+    user_id VARCHAR(36) NOT NULL COMMENT '用户ID',
+    name VARCHAR(100) NOT NULL COMMENT '服务名称',
+    description TEXT COMMENT '服务描述',
+
+    -- 连接配置
+    transport ENUM('stdio', 'sse', 'http') NOT NULL COMMENT '传输方式',
+    command VARCHAR(500) COMMENT '命令 (stdio模式)',
+    args JSON COMMENT '参数 (stdio模式)',
+    url VARCHAR(500) COMMENT 'URL (sse/http模式)',
+    env JSON COMMENT '环境变量',
+
+    -- 状态
+    is_active BOOLEAN DEFAULT TRUE COMMENT '是否激活',
+    last_connected_at TIMESTAMP NULL COMMENT '上次连接时间',
+
+    -- 工具列表 (缓存)
+    tools JSON COMMENT '可用工具列表',
+
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+
+    INDEX idx_user_id (user_id),
+    INDEX idx_active (is_active),
+    FOREIGN KEY (user_id) REFERENCES local_users(id) ON DELETE CASCADE
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='MCP服务配置表';
+
+-- 工作流发布历史表
+CREATE TABLE IF NOT EXISTS workflow_publish_history (
+    id VARCHAR(36) PRIMARY KEY,
+    workflow_id VARCHAR(36) NOT NULL COMMENT '工作流ID',
+    user_id VARCHAR(36) NOT NULL COMMENT '发布用户ID',
+    version VARCHAR(20) NOT NULL COMMENT '版本号',
+    changes TEXT COMMENT '更新说明',
+
+    -- 工作流定义快照
+    nodes JSON NOT NULL COMMENT '节点列表快照',
+    edges JSON NOT NULL COMMENT '边列表快照',
+    variables JSON COMMENT '变量定义快照',
+
+    published_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP COMMENT '发布时间',
+
+    INDEX idx_workflow_id (workflow_id),
+    INDEX idx_published_at (published_at),
+    FOREIGN KEY (workflow_id) REFERENCES workflows(id) ON DELETE CASCADE,
+    FOREIGN KEY (user_id) REFERENCES local_users(id) ON DELETE CASCADE
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='工作流发布历史表';

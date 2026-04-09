@@ -13,6 +13,8 @@ import { authRoutes } from './routes/auth'
 import { authMiddleware } from './middleware/auth'
 import { claudeCodeSkillsRoutes } from './routes/claudeCodeSkills'
 import { settingsRoutes } from './routes/settings'
+import { workflowRoutes } from './routes/workflows'
+import { inventoryRoutes } from './routes/inventory'
 import { chatWithAI, getAgentSystemPrompt } from './lib/ai'
 import { ClaudeSession, type ChatEvent } from './lib/claudeSession'
 import { initDatabase, getSessionMessages, createSession, checkDatabaseHealth, getUserSessions, updateSessionTitle, softDeleteSession } from './db'
@@ -64,14 +66,16 @@ const app = new Elysia()
   })
 
   // Get all chat sessions
-  .get('/api/chat/sessions', async ({ query }) => {
+  .get('/api/chat/sessions', async ({ query, request }) => {
     if (!DB_ENABLED) {
       return { sessions: [] }
     }
     try {
-      const { userId, limit } = query
+      const { limit } = query
+      // 从 authMiddleware 获取用户ID
+      const userId = (request as any).user?.id
       const sessions = await getUserSessions(
-        userId as string | undefined,
+        userId,
         limit ? parseInt(limit as string) : 50
       )
       return { sessions }
@@ -82,12 +86,14 @@ const app = new Elysia()
   })
 
   // Create new chat session
-  .post('/api/chat/sessions', async ({ body }) => {
+  .post('/api/chat/sessions', async ({ body, request }) => {
     if (!DB_ENABLED) {
       return { error: 'Database not enabled' }
     }
     try {
-      const { userId, title, agentId, agentName, agentAvatar } = body as any
+      const { title, agentId, agentName, agentAvatar } = body as any
+      // 从 authMiddleware 获取用户ID
+      const userId = (request as any).user?.id || 'default-user'
       const sessionId = crypto.randomUUID()
       await createSession(sessionId, {
         userId,
@@ -143,6 +149,8 @@ const app = new Elysia()
   .use(scheduledTaskRoutes)
   .use(claudeCodeSkillsRoutes)
   .use(settingsRoutes)
+  .use(workflowRoutes)
+  .use(inventoryRoutes)
 
   // WebSocket for real-time chat with full Claude Code capabilities
   .ws('/ws/chat', {
