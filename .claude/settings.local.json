@@ -26,7 +26,12 @@
       "Bash(npx tsx:*)",
       "Bash(python3:*)",
       "Read(//tmp/**)",
-      "Bash(bun tsc:*)"
+      "Bash(bun tsc:*)",
+      "Bash(pkill -f \"bun.*server\")",
+      "Bash(curl -s -X POST http://localhost:8080/api/auth/send-phone-code -H 'Content-Type: application/json' -d '{\"phone\": \"13800138000\", \"type\": \"register\"}')",
+      "Read(//private/tmp/**)",
+      "Bash(mysql -h localhost -u root -p123456 kane-work -e \"SELECT code FROM verification_codes WHERE phone = '13800138000' AND is_used = false ORDER BY created_at DESC LIMIT 1;\")",
+      "Bash(curl:*)"
     ]
   }
 }

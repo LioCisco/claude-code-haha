@@ -81,6 +81,65 @@ export async function withTransaction<T>(fn: (connection: mysql.PoolConnection) 
   }
 }
 
+// 运行数据库迁移
+async function runMigrations(): Promise<void> {
+  try {
+    // 检查并添加 local_users 表的 phone 字段
+    const phoneExists = await queryOne(
+      `SELECT COUNT(*) as count FROM INFORMATION_SCHEMA.COLUMNS
+       WHERE TABLE_NAME = 'local_users' AND COLUMN_NAME = 'phone'`,
+      []
+    )
+    if ((phoneExists as any)?.count === 0) {
+      await pool.execute(`ALTER TABLE local_users ADD COLUMN phone VARCHAR(20) UNIQUE AFTER email`)
+      console.log('✅ Migration: Added phone column to local_users')
+    }
+
+    // 检查并添加 display_name 字段
+    const displayNameExists = await queryOne(
+      `SELECT COUNT(*) as count FROM INFORMATION_SCHEMA.COLUMNS
+       WHERE TABLE_NAME = 'local_users' AND COLUMN_NAME = 'display_name'`,
+      []
+    )
+    if ((displayNameExists as any)?.count === 0) {
+      await pool.execute(`ALTER TABLE local_users ADD COLUMN display_name VARCHAR(100) AFTER password_hash`)
+      console.log('✅ Migration: Added display_name column to local_users')
+    }
+
+    // 检查并添加 company_name 字段
+    const companyNameExists = await queryOne(
+      `SELECT COUNT(*) as count FROM INFORMATION_SCHEMA.COLUMNS
+       WHERE TABLE_NAME = 'local_users' AND COLUMN_NAME = 'company_name'`,
+      []
+    )
+    if ((companyNameExists as any)?.count === 0) {
+      await pool.execute(`ALTER TABLE local_users ADD COLUMN company_name VARCHAR(255) AFTER display_name`)
+      console.log('✅ Migration: Added company_name column to local_users')
+    }
+
+    // 检查并更新 verification_codes 表的 phone 字段
+    const vcPhoneExists = await queryOne(
+      `SELECT COUNT(*) as count FROM INFORMATION_SCHEMA.COLUMNS
+       WHERE TABLE_NAME = 'verification_codes' AND COLUMN_NAME = 'phone'`,
+      []
+    )
+    if ((vcPhoneExists as any)?.count === 0) {
+      await pool.execute(`ALTER TABLE verification_codes ADD COLUMN phone VARCHAR(20) AFTER email`)
+      await pool.execute(`ALTER TABLE verification_codes MODIFY email VARCHAR(255) NULL`)
+      console.log('✅ Migration: Added phone column to verification_codes')
+    }
+
+    // 检查并更新 verification_codes 表的 type 字段添加 phone_login
+    try {
+      await pool.execute(`ALTER TABLE verification_codes MODIFY type ENUM('register', 'reset_password', 'phone_login') NOT NULL`)
+    } catch {
+      // 可能已经是最新的，忽略错误
+    }
+  } catch (error) {
+    console.error('❌ Migration failed:', error)
+  }
+}
+
 // 初始化数据库（创建表）
 export async function initDatabase(): Promise<void> {
   try {
@@ -105,6 +164,9 @@ export async function initDatabase(): Promise<void> {
         }
       }
     }
+
+    // 运行迁移
+    await runMigrations()
 
     console.log('✅ 数据库初始化完成')
   } catch (error) {

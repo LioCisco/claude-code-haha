@@ -3,7 +3,11 @@
 export interface LocalUser {
   id: string
   username: string
+  email?: string
+  phone?: string
   password_hash?: string
+  display_name?: string
+  company_name?: string
   is_default: boolean
   created_at: Date
   updated_at: Date

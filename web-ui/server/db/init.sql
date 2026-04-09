@@ -11,25 +11,31 @@ CREATE TABLE IF NOT EXISTS local_users (
     id VARCHAR(36) PRIMARY KEY,
     username VARCHAR(100) NOT NULL UNIQUE,
     email VARCHAR(255) UNIQUE,
+    phone VARCHAR(20) UNIQUE,
     password_hash VARCHAR(255), -- 可选，本地使用可不设密码
+    display_name VARCHAR(100), -- 显示名称/姓名
+    company_name VARCHAR(255), -- 公司名称
     is_default BOOLEAN DEFAULT FALSE, -- 是否为默认用户
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
     last_login_at TIMESTAMP NULL,
     INDEX idx_username (username),
-    INDEX idx_email (email)
+    INDEX idx_email (email),
+    INDEX idx_phone (phone)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 -- 验证码表
 CREATE TABLE IF NOT EXISTS verification_codes (
     id VARCHAR(36) PRIMARY KEY,
-    email VARCHAR(255) NOT NULL,
+    email VARCHAR(255),
+    phone VARCHAR(20),
     code VARCHAR(10) NOT NULL,
-    type ENUM('register', 'reset_password') NOT NULL,
+    type ENUM('register', 'reset_password', 'phone_login') NOT NULL,
     expires_at TIMESTAMP NOT NULL,
     is_used BOOLEAN DEFAULT FALSE,
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     INDEX idx_email_type (email, type),
+    INDEX idx_phone_type (phone, type),
     INDEX idx_expires (expires_at),
     INDEX idx_is_used (is_used)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;

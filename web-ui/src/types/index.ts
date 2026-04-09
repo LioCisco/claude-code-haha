@@ -130,11 +130,16 @@ export interface AnalyticsData {
 
 export interface User {
   id: string
-  name: string
-  email: string
+  username: string
+  name?: string
+  email?: string
+  phone?: string
   avatar?: string
-  plan: 'free' | 'pro' | 'enterprise'
-  tokens: number
+  company_name?: string
+  display_name?: string
+  is_default?: boolean
+  plan?: 'free' | 'pro' | 'enterprise'
+  tokens?: number
 }
 
 // Scheduled Tasks
