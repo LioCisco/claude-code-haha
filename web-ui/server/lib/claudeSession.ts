@@ -7,6 +7,7 @@ import { saveMessage, getSessionMessages, createSession, getSession, updateSessi
 import { findRelevantMemories, extractMemoryFromConversation, generateMemorySystemPrompt } from './memoryAI'
 import { syncMemoriesToFiles } from './memorySync'
 import { getPluginToolDefinitions } from './pluginEngine'
+import { SKILL_TOOL_DEFINITION, skillRegistry } from './skillTool'
 
 const execAsync = promisify(exec)
 
@@ -49,6 +50,12 @@ export type ChatEvent =
   | { type: 'ask_user_question'; question: string; options?: string[] }
   | { type: 'done' }
   | { type: 'error'; message: string }
+  | { type: 'title_updated'; title: string }
+  | { type: 'memory_extracted'; memory: { name: string; description: string; type: string; content: string; tags: string[] } }
+  // Skill related events
+  | { type: 'skill_invoke'; skill: string; args?: string; status: 'running' | 'completed' | 'error' }
+  | { type: 'skill_progress'; skill: string; message: string }
+  | { type: 'skill_result'; skill: string; result: string; isError?: boolean }
 
 export type PendingPermission = {
   resolve: (allowed: boolean) => void
@@ -163,6 +170,7 @@ async function callWebSearch(query: string): Promise<string> {
 
 // ================== Tool Definitions ==================
 const TOOL_DEFINITIONS: Anthropic.Messages.Tool[] = [
+  SKILL_TOOL_DEFINITION,
   {
     name: 'bash',
     description: 'Execute bash commands in the project directory. Use with care.',
@@ -607,10 +615,97 @@ export class ClaudeSession {
     }
   }
 
+  private async executeSkill(
+    skillName: string,
+    args?: string
+  ): Promise<{ result: string; isError?: boolean }> {
+    // Notify frontend that skill is starting
+    await this.onEvent({
+      type: 'skill_invoke',
+      skill: skillName,
+      args,
+      status: 'running',
+    })
+
+    try {
+      // Find skill
+      const skill = skillRegistry.get(skillName)
+      if (!skill) {
+        const error = `Unknown skill: ${skillName}`
+        await this.onEvent({ type: 'skill_invoke', skill: skillName, status: 'error' })
+        return { result: error, isError: true }
+      }
+
+      // Get skill prompt
+      const context = {
+        sessionId: this.sessionId,
+        userId: this.userId || undefined,
+        messages: this.messages,
+      }
+
+      const skillPrompt = await skill.getPrompt(args || '', context)
+
+      // Execute based on context type
+      if (skill.context === 'fork') {
+        return await this.executeForkedSkill(skill, skillPrompt)
+      } else {
+        return await this.executeInlineSkill(skill, skillPrompt)
+      }
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err)
+      await this.onEvent({ type: 'skill_invoke', skill: skillName, status: 'error' })
+      return { result: `Skill execution failed: ${msg}`, isError: true }
+    }
+  }
+
+  private async executeInlineSkill(
+    skill: any,
+    skillPrompt: string
+  ): Promise<{ result: string; isError?: boolean }> {
+    // Add skill prompt as user message
+    this.messages.push({
+      role: 'user',
+      content: `[Skill: ${skill.name}]\n\n${skillPrompt}`,
+    })
+
+    await this.onEvent({
+      type: 'skill_invoke',
+      skill: skill.name,
+      status: 'completed',
+    })
+
+    return {
+      result: `Skill "${skill.name}" loaded. Proceeding with skill instructions.`,
+      isError: false,
+    }
+  }
+
+  private async executeForkedSkill(
+    skill: any,
+    skillPrompt: string
+  ): Promise<{ result: string; isError?: boolean }> {
+    await this.onEvent({
+      type: 'skill_progress',
+      skill: skill.name,
+      message: 'Executing in forked context...',
+    })
+
+    // TODO: Implement true fork mode with sub-agent
+    // For now, use inline mode
+    return this.executeInlineSkill(skill, skillPrompt)
+  }
+
   private async executeTool(
     name: string,
     input: Record<string, unknown>
   ): Promise<{ result: string; isError?: boolean }> {
+    // Handle Skill Tool
+    if (name === 'skill') {
+      const skillName = String(input.skill || '')
+      const args = String(input.args || '')
+      return this.executeSkill(skillName, args)
+    }
+
     // Permission gate for sensitive tools
     if (isSensitiveTool(name)) {
       const allowed = await this.requestPermission(name, input)
