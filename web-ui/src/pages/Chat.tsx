@@ -52,6 +52,10 @@ type ChatEvent =
   | { type: 'title_updated'; title: string }
   | { type: 'memory_extracted'; memory: { name: string; description: string; type: string; content: string; tags: string[] } }
   | { type: 'pong' }
+  // Skill events
+  | { type: 'skill_invoke'; skill: string; args?: string; status: 'running' | 'completed' | 'error' }
+  | { type: 'skill_progress'; skill: string; message: string }
+  | { type: 'skill_result'; skill: string; result: string; isError?: boolean }
 
 // Slash commands definition
 interface SlashCommand {
@@ -293,6 +297,13 @@ export default function Chat() {
   const [relevantMemories, setRelevantMemories] = useState<Array<{ id: string; name: string; type: string; content: string; relevance: number }>>([])
   const [showMemories, setShowMemories] = useState(false)
   const [extractedMemory, setExtractedMemory] = useState<Memory | null>(null)
+  // Skill invocation state
+  const [activeSkills, setActiveSkills] = useState<Map<string, {
+    skill: string
+    args?: string
+    status: 'running' | 'completed' | 'error'
+    result?: string
+  }>>(new Map())
   // Plugin state
   const [plugins, setPlugins] = useState<Plugin[]>([])
   const [activePlugins, setActivePlugins] = useState<Set<string>>(new Set())
@@ -504,6 +515,57 @@ export default function Chat() {
             // Clear after 5 seconds
             setTimeout(() => setExtractedMemory(null), 5000)
           }
+          break
+        }
+
+        case 'skill_invoke': {
+          setActiveSkills(prev => {
+            const next = new Map(prev)
+            next.set(data.skill, {
+              skill: data.skill,
+              args: data.args,
+              status: data.status,
+            })
+            return next
+          })
+
+          // Add skill invocation message
+          if (data.status === 'running') {
+            store.addMessage({
+              content: `🔧 使用 Skill: **${data.skill}**${data.args ? ` (${data.args})` : ''}`,
+              role: 'system',
+            })
+          }
+          break
+        }
+
+        case 'skill_progress': {
+          // Update skill progress
+          setActiveSkills(prev => {
+            const next = new Map(prev)
+            const existing = next.get(data.skill)
+            if (existing) {
+              next.set(data.skill, { ...existing, status: 'running' })
+            }
+            return next
+          })
+          break
+        }
+
+        case 'skill_result': {
+          setActiveSkills(prev => {
+            const next = new Map(prev)
+            next.delete(data.skill)
+            return next
+          })
+
+          // Add result message
+          store.addMessage({
+            content: data.isError
+              ? `❌ Skill "${data.skill}" 执行失败: ${data.result}`
+              : `✅ Skill "${data.skill}" 执行完成`,
+            role: 'system',
+          })
           break
         }
 
@@ -1127,6 +1189,20 @@ export default function Chat() {
 
         {/* Messages */}
         <div className="flex-1 overflow-y-auto p-4 space-y-4">
+          {/* Active Skills */}
+          {activeSkills.size > 0 && (
+            <div className="px-4 py-2 space-y-2">
+              {Array.from(activeSkills.values()).map((skill) => (
+                <SkillInvokeCard
+                  key={skill.skill}
+                  skill={skill.skill}
+                  args={skill.args}
+                  status={skill.status}
+                />
+              ))}
+            </div>
+          )}
+
           {messages.length === 0 && (
             <div className="h-full flex flex-col items-center justify-center text-center px-8">
               <div className="w-16 h-16 bg-gradient-to-br from-accio-400 to-accio-600 rounded-2xl flex items-center justify-center mb-4 shadow-lg shadow-accio-500/25">
@@ -1534,4 +1610,33 @@ function formatToolResult(name: string, result: string, isError?: boolean): stri
   const prefix = isError ? '❌ 工具执行失败' : '✅ 工具执行完成'
   const truncated = result.length > 800 ? result.slice(0, 800) + '\n... [truncated]' : result
   return `${prefix} (${name}):\n\`\`\`\n${truncated}\n\`\`\``
+}
+
+// Skill invocation card component
+function SkillInvokeCard({ skill, args, status }: {
+  skill: string
+  args?: string
+  status: 'running' | 'completed' | 'error'
+}) {
+  const statusConfig = {
+    running: { icon: '🔧', color: 'bg-blue-100 text-blue-700 border-blue-200', text: '执行中...' },
+    completed: { icon: '✅', color: 'bg-green-100 text-green-700 border-green-200', text: '已完成' },
+    error: { icon: '❌', color: 'bg-red-100 text-red-700 border-red-200', text: '执行失败' },
+  }
+
+  const config = statusConfig[status]
+
+  return (
+    <div className={cn(
+      "flex items-center gap-3 px-4 py-3 rounded-xl border mb-3",
+      config.color
+    )}>
+      <span className="text-xl">{config.icon}</span>
+      <div className="flex-1">
+        <div className="font-medium">使用 Skill: <code className="font-mono text-sm">/{skill}</code></div>
+        {args && <div className="text-sm opacity-75 font-mono">{args}</div>}
+      </div>
+      <div className="text-sm font-medium">{config.text}</div>
+    </div>
+  )
 }
