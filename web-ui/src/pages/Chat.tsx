@@ -127,7 +127,7 @@ class WsManager {
 
     ws.onopen = () => {
       console.log('[WsManager] Connected, sessionId:', sessionId)
-      this.isConnecting = false
+      this._isConnecting = false
       this.reconnectAttempts = 0 // Reset reconnect attempts on successful connection
 
       // Start ping to keep connection alive
@@ -148,14 +148,14 @@ class WsManager {
 
     ws.onerror = (err) => {
       console.error('[WsManager] Error:', err)
-      this.isConnecting = false
+      this._isConnecting = false
     }
 
     ws.onclose = (event) => {
       console.log('[WsManager] Closed, code:', event.code, 'reason:', event.reason)
       this.stopPing()
       this.ws = null
-      this.isConnecting = false
+      this._isConnecting = false
 
       // Don't reconnect if explicitly closed (code 1000 or 1001)
       if (event.code === 1000 || event.code === 1001) {
