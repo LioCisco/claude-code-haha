@@ -12,11 +12,19 @@ declare module 'elysia' {
 
 // 认证中间件
 export const authMiddleware = new Elysia()
-  .onBeforeHandle(async ({ request, set }) => {
+  .onBeforeHandle(async ({ request, set, headers }) => {
+    // 跳过 OPTIONS 预检请求
+    if (request.method === 'OPTIONS') {
+      return
+    }
+
     // 跳过某些公开路由的认证
     const publicPaths = [
       '/api/auth/login',
       '/api/auth/register',
+      '/api/auth/login/phone',
+      '/api/auth/register/phone',
+      '/api/auth/send-phone-code',
       '/api/health',
       '/swagger',
       '/swagger/json',
@@ -28,8 +36,10 @@ export const authMiddleware = new Elysia()
     }
 
     // 获取Authorization header
-    const authHeader = request.headers.get('authorization')
+    const authHeader = headers.authorization
+    console.log('[Auth Middleware] Auth header:', authHeader?.slice(0, 30))
     if (!authHeader || !authHeader.startsWith('Bearer ')) {
+      console.log('[Auth Middleware] No valid auth header')
       set.status = 401
       return {
         success: false,
@@ -39,18 +49,22 @@ export const authMiddleware = new Elysia()
     }
 
     const token = authHeader.substring(7)
+    console.log('[Auth Middleware] Token extracted:', token.slice(0, 20) + '...')
 
     try {
       // 验证Token
       const payload = verifyToken(token)
+      console.log('[Auth Middleware] Token verified, userId:', payload.userId)
 
       // 查询用户
       const user = await queryOne<LocalUser>(
         'SELECT * FROM local_users WHERE id = ?',
         [payload.userId]
       )
+      console.log('[Auth Middleware] User query result:', user?.id || 'not found')
 
       if (!user) {
+        console.log('[Auth Middleware] User not found for id:', payload.userId)
         set.status = 401
         return {
           success: false,
@@ -62,7 +76,8 @@ export const authMiddleware = new Elysia()
       // 将用户信息附加到上下文
       // @ts-ignore
       request.user = user
-    } catch (error) {
+      console.log('[Auth Middleware] User attached to request:', user.id)
+    } catch {
       set.status = 401
       return {
         success: false,

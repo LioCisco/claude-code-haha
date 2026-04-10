@@ -295,11 +295,12 @@ export async function checkDatabaseHealth(): Promise<boolean> {
 
 // Get all sessions for a user
 export async function getUserSessions(userId?: string, limit: number = 50) {
-  const sql = userId
-    ? `SELECT * FROM chat_sessions WHERE user_id = ? AND is_active = TRUE ORDER BY updated_at DESC LIMIT ${parseInt(String(limit))}`
-    : `SELECT * FROM chat_sessions WHERE is_active = TRUE ORDER BY updated_at DESC LIMIT ${parseInt(String(limit))}`
-  const params = userId ? [userId] : []
-  const rows = await query<any>(sql, params)
+  // 没有用户ID时返回空数组，不返回任何数据
+  if (!userId) {
+    return []
+  }
+  const sql = `SELECT * FROM chat_sessions WHERE user_id = ? AND is_active = TRUE ORDER BY updated_at DESC LIMIT ${parseInt(String(limit))}`
+  const rows = await query<any>(sql, [userId])
   return rows.map(row => ({
     id: row.id,
     userId: row.user_id,
@@ -795,6 +796,173 @@ export async function getRecentTaskResults(limit: number = 100): Promise<TaskRes
   return await query<TaskResultDB>(
     `SELECT * FROM scheduled_task_results ORDER BY created_at DESC LIMIT ${parseInt(String(limit))}`
   )
+}
+
+// ==================== Memory Functions ====================
+
+export interface MemoryDB {
+  id: string
+  user_id: string
+  project_id?: string
+  name: string
+  description: string
+  type: 'user' | 'feedback' | 'project' | 'reference'
+  content: string
+  tags?: string[]
+  is_active: boolean
+  created_at: Date
+  updated_at: Date
+}
+
+// Get all memories for user
+export async function getUserMemories(userId: string, type?: string): Promise<MemoryDB[]> {
+  const sql = type
+    ? `SELECT * FROM memories WHERE user_id = ? AND type = ? AND is_active = TRUE ORDER BY updated_at DESC`
+    : `SELECT * FROM memories WHERE user_id = ? AND is_active = TRUE ORDER BY updated_at DESC`
+  const params = type ? [userId, type] : [userId]
+  const rows = await query<any>(sql, params)
+  return rows.map(row => ({
+    id: row.id,
+    user_id: row.user_id,
+    project_id: row.project_id,
+    name: row.name,
+    description: row.description,
+    type: row.type,
+    content: row.content,
+    tags: row.tags ? JSON.parse(row.tags) : [],
+    is_active: row.is_active,
+    created_at: row.created_at,
+    updated_at: row.updated_at,
+  }))
+}
+
+// Get memory by ID
+export async function getMemoryById(memoryId: string, userId: string): Promise<MemoryDB | null> {
+  const row = await queryOne<any>(
+    'SELECT * FROM memories WHERE id = ? AND user_id = ? AND is_active = TRUE',
+    [memoryId, userId]
+  )
+  if (!row) return null
+  return {
+    id: row.id,
+    user_id: row.user_id,
+    project_id: row.project_id,
+    name: row.name,
+    description: row.description,
+    type: row.type,
+    content: row.content,
+    tags: row.tags ? JSON.parse(row.tags) : [],
+    is_active: row.is_active,
+    created_at: row.created_at,
+    updated_at: row.updated_at,
+  }
+}
+
+// Create memory
+export async function createMemory(data: {
+  id: string
+  userId: string
+  projectId?: string
+  name: string
+  description: string
+  type: 'user' | 'feedback' | 'project' | 'reference'
+  content: string
+  tags?: string[]
+}): Promise<void> {
+  await execute(
+    `INSERT INTO memories (id, user_id, project_id, name, description, type, content, tags, is_active)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, TRUE)`,
+    [
+      data.id,
+      data.userId,
+      data.projectId || null,
+      data.name,
+      data.description,
+      data.type,
+      data.content,
+      data.tags ? JSON.stringify(data.tags) : null,
+    ]
+  )
+}
+
+// Update memory
+export async function updateMemory(
+  memoryId: string,
+  userId: string,
+  updates: Partial<{
+    name: string
+    description: string
+    content: string
+    tags: string[]
+    is_active: boolean
+  }>
+): Promise<boolean> {
+  const fields: string[] = []
+  const values: any[] = []
+
+  if (updates.name !== undefined) {
+    fields.push('name = ?')
+    values.push(updates.name)
+  }
+  if (updates.description !== undefined) {
+    fields.push('description = ?')
+    values.push(updates.description)
+  }
+  if (updates.content !== undefined) {
+    fields.push('content = ?')
+    values.push(updates.content)
+  }
+  if (updates.tags !== undefined) {
+    fields.push('tags = ?')
+    values.push(JSON.stringify(updates.tags))
+  }
+  if (updates.is_active !== undefined) {
+    fields.push('is_active = ?')
+    values.push(updates.is_active)
+  }
+
+  if (fields.length === 0) return true
+
+  fields.push('updated_at = NOW()')
+  values.push(memoryId, userId)
+
+  const result = await execute(
+    `UPDATE memories SET ${fields.join(', ')} WHERE id = ? AND user_id = ?`,
+    values
+  )
+  return result.affectedRows > 0
+}
+
+// Delete memory (soft delete)
+export async function deleteMemory(memoryId: string, userId: string): Promise<boolean> {
+  const result = await execute(
+    'UPDATE memories SET is_active = FALSE, updated_at = NOW() WHERE id = ? AND user_id = ?',
+    [memoryId, userId]
+  )
+  return result.affectedRows > 0
+}
+
+// Search memories
+export async function searchMemories(userId: string, query: string): Promise<MemoryDB[]> {
+  const sql = `SELECT * FROM memories
+               WHERE user_id = ? AND is_active = TRUE
+               AND (name LIKE ? OR description LIKE ? OR content LIKE ?)
+               ORDER BY updated_at DESC`
+  const likeQuery = `%${query}%`
+  const rows = await query<any>(sql, [userId, likeQuery, likeQuery, likeQuery])
+  return rows.map(row => ({
+    id: row.id,
+    user_id: row.user_id,
+    project_id: row.project_id,
+    name: row.name,
+    description: row.description,
+    type: row.type,
+    content: row.content,
+    tags: row.tags ? JSON.parse(row.tags) : [],
+    is_active: row.is_active,
+    created_at: row.created_at,
+    updated_at: row.updated_at,
+  }))
 }
 
 // ==================== Settings Functions ====================
@@ -1360,4 +1528,618 @@ export async function getPublishHistory(workflowId: string): Promise<WorkflowPub
      ORDER BY h.published_at DESC`,
     [workflowId]
   )
+}
+
+// ==================== Plugin Functions ====================
+
+export interface PluginDB {
+  id: string
+  user_id: string | null
+  name: string
+  description: string | null
+  version: string
+  author: string | null
+  icon: string
+  category: string
+  type: 'builtin' | 'mcp' | 'http' | 'webhook'
+  config: any
+  manifest: any
+  code: string | null
+  mcp_config: any
+  status: 'active' | 'inactive' | 'error'
+  is_system: boolean
+  is_enabled: boolean
+  usage_count: number
+  last_used_at: Date | null
+  last_error: string | null
+  created_at: Date
+  updated_at: Date
+}
+
+export interface PluginExecutionDB {
+  id: string
+  plugin_id: string
+  user_id: string | null
+  session_id: string | null
+  tool_name: string | null
+  params: any
+  result: any
+  status: 'success' | 'error' | 'timeout'
+  error_message: string | null
+  duration_ms: number | null
+  created_at: Date
+}
+
+// Get all plugins
+export async function getAllPlugins(
+  userId?: string,
+  category?: string,
+  status?: string
+): Promise<PluginDB[]> {
+  let sql = `SELECT * FROM plugins WHERE (user_id = ? OR is_system = TRUE OR user_id IS NULL)`
+  const params: any[] = [userId || 'default-user']
+
+  if (category) {
+    sql += ` AND category = ?`
+    params.push(category)
+  }
+  if (status) {
+    sql += ` AND status = ?`
+    params.push(status)
+  }
+
+  sql += ` ORDER BY is_system DESC, created_at DESC`
+  return await query<PluginDB>(sql, params)
+}
+
+// Get plugin by ID
+export async function getPluginById(pluginId: string): Promise<PluginDB | null> {
+  return await queryOne<PluginDB>('SELECT * FROM plugins WHERE id = ?', [pluginId])
+}
+
+// Get active plugins for user
+export async function getActivePlugins(userId?: string): Promise<PluginDB[]> {
+  const sql = userId
+    ? `SELECT * FROM plugins WHERE status = 'active' AND is_enabled = TRUE AND (user_id = ? OR is_system = TRUE)`
+    : `SELECT * FROM plugins WHERE status = 'active' AND is_enabled = TRUE AND is_system = TRUE`
+  const params = userId ? [userId] : []
+  return await query<PluginDB>(sql, params)
+}
+
+// Create plugin
+export async function createPlugin(data: {
+  id: string
+  userId?: string | null
+  name: string
+  description?: string
+  version?: string
+  author?: string
+  icon?: string
+  category?: string
+  type?: 'builtin' | 'mcp' | 'http' | 'webhook'
+  config?: any
+  manifest?: any
+  code?: string
+  mcpConfig?: any
+  status?: string
+  isSystem?: boolean
+}): Promise<void> {
+  await execute(
+    `INSERT INTO plugins (
+      id, user_id, name, description, version, author, icon, category,
+      type, config, manifest, code, mcp_config, status, is_system, is_enabled
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, TRUE)`,
+    [
+      data.id,
+      data.userId || null,
+      data.name,
+      data.description || null,
+      data.version || '1.0.0',
+      data.author || null,
+      data.icon || 'Puzzle',
+      data.category || 'utility',
+      data.type || 'builtin',
+      data.config ? JSON.stringify(data.config) : null,
+      data.manifest ? JSON.stringify(data.manifest) : null,
+      data.code || null,
+      data.mcpConfig ? JSON.stringify(data.mcpConfig) : null,
+      data.status || 'inactive',
+      data.isSystem || false,
+    ]
+  )
+}
+
+// Update plugin
+export async function updatePlugin(
+  pluginId: string,
+  updates: Partial<{
+    name: string
+    description: string
+    version: string
+    author: string
+    icon: string
+    category: string
+    config: any
+    manifest: any
+    code: string
+    mcpConfig: any
+    status: string
+    isEnabled: boolean
+    lastError: string
+  }>
+): Promise<boolean> {
+  const fields: string[] = []
+  const values: any[] = []
+
+  if (updates.name !== undefined) {
+    fields.push('name = ?')
+    values.push(updates.name)
+  }
+  if (updates.description !== undefined) {
+    fields.push('description = ?')
+    values.push(updates.description)
+  }
+  if (updates.version !== undefined) {
+    fields.push('version = ?')
+    values.push(updates.version)
+  }
+  if (updates.author !== undefined) {
+    fields.push('author = ?')
+    values.push(updates.author)
+  }
+  if (updates.icon !== undefined) {
+    fields.push('icon = ?')
+    values.push(updates.icon)
+  }
+  if (updates.category !== undefined) {
+    fields.push('category = ?')
+    values.push(updates.category)
+  }
+  if (updates.config !== undefined) {
+    fields.push('config = ?')
+    values.push(JSON.stringify(updates.config))
+  }
+  if (updates.manifest !== undefined) {
+    fields.push('manifest = ?')
+    values.push(JSON.stringify(updates.manifest))
+  }
+  if (updates.code !== undefined) {
+    fields.push('code = ?')
+    values.push(updates.code)
+  }
+  if (updates.mcpConfig !== undefined) {
+    fields.push('mcp_config = ?')
+    values.push(JSON.stringify(updates.mcpConfig))
+  }
+  if (updates.status !== undefined) {
+    fields.push('status = ?')
+    values.push(updates.status)
+  }
+  if (updates.isEnabled !== undefined) {
+    fields.push('is_enabled = ?')
+    values.push(updates.isEnabled)
+  }
+  if (updates.lastError !== undefined) {
+    fields.push('last_error = ?')
+    values.push(updates.lastError)
+  }
+
+  if (fields.length === 0) return true
+
+  fields.push('updated_at = NOW()')
+  values.push(pluginId)
+
+  const result = await execute(`UPDATE plugins SET ${fields.join(', ')} WHERE id = ?`, values)
+  return result.affectedRows > 0
+}
+
+// Delete plugin
+export async function deletePlugin(pluginId: string): Promise<boolean> {
+  const result = await execute('DELETE FROM plugins WHERE id = ? AND is_system = FALSE', [pluginId])
+  return result.affectedRows > 0
+}
+
+// Toggle plugin status
+export async function togglePluginStatus(pluginId: string, status: string): Promise<boolean> {
+  const result = await execute(
+    'UPDATE plugins SET status = ?, updated_at = NOW() WHERE id = ?',
+    [status, pluginId]
+  )
+  return result.affectedRows > 0
+}
+
+// Increment plugin usage
+export async function incrementPluginUsage(pluginId: string): Promise<void> {
+  await execute(
+    'UPDATE plugins SET usage_count = usage_count + 1, last_used_at = NOW() WHERE id = ?',
+    [pluginId]
+  )
+}
+
+// Log plugin execution
+export async function logPluginExecution(data: {
+  id: string
+  pluginId: string
+  userId?: string
+  sessionId?: string
+  toolName?: string
+  params?: any
+  result?: any
+  status: 'success' | 'error' | 'timeout'
+  errorMessage?: string
+  durationMs?: number
+}): Promise<void> {
+  await execute(
+    `INSERT INTO plugin_executions
+     (id, plugin_id, user_id, session_id, tool_name, params, result, status, error_message, duration_ms)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    [
+      data.id,
+      data.pluginId,
+      data.userId || null,
+      data.sessionId || null,
+      data.toolName || null,
+      data.params ? JSON.stringify(data.params) : null,
+      data.result ? JSON.stringify(data.result) : null,
+      data.status,
+      data.errorMessage || null,
+      data.durationMs || null,
+    ]
+  )
+}
+
+// Get plugin execution history
+export async function getPluginExecutions(pluginId: string, limit: number = 50): Promise<PluginExecutionDB[]> {
+  return await query<PluginExecutionDB>(
+    `SELECT * FROM plugin_executions
+     WHERE plugin_id = ?
+     ORDER BY created_at DESC
+     LIMIT ${parseInt(String(limit))}`,
+    [pluginId]
+  )
+}
+
+// ==================== Marketplace Functions ====================
+
+export interface MarketplacePluginDB {
+  id: string
+  name: string
+  description: string | null
+  short_description: string | null
+  version: string
+  author_id: string
+  author_name: string | null
+  author_avatar: string | null
+  icon: string
+  category: string
+  type: 'builtin' | 'mcp' | 'http' | 'webhook'
+  manifest: any
+  code: string | null
+  mcp_config: any
+  screenshots: any
+  readme: string | null
+  tags: any
+  status: 'pending' | 'approved' | 'rejected' | 'deprecated'
+  visibility: 'public' | 'unlisted' | 'private'
+  download_count: number
+  rating_avg: number
+  rating_count: number
+  install_count: number
+  local_plugin_id: string | null
+  created_at: Date
+  updated_at: Date
+  approved_at: Date | null
+}
+
+// Get marketplace plugins
+export async function getMarketplacePlugins(
+  category?: string,
+  sort: string = 'popular',
+  page: number = 1,
+  limit: number = 20
+): Promise<MarketplacePluginDB[]> {
+  let sql = `SELECT * FROM marketplace_plugins WHERE status = 'approved' AND visibility = 'public'`
+  const params: any[] = []
+
+  if (category) {
+    sql += ` AND category = ?`
+    params.push(category)
+  }
+
+  // Sort options
+  switch (sort) {
+    case 'popular':
+      sql += ` ORDER BY download_count DESC, rating_avg DESC`
+      break
+    case 'newest':
+      sql += ` ORDER BY created_at DESC`
+      break
+    case 'rating':
+      sql += ` ORDER BY rating_avg DESC, rating_count DESC`
+      break
+    case 'name':
+      sql += ` ORDER BY name ASC`
+      break
+    default:
+      sql += ` ORDER BY download_count DESC`
+  }
+
+  sql += ` LIMIT ${parseInt(String(limit))} OFFSET ${(page - 1) * limit}`
+
+  return await query<MarketplacePluginDB>(sql, params)
+}
+
+// Search marketplace plugins
+export async function searchMarketplacePlugins(
+  query: string,
+  category?: string,
+  sort: string = 'popular',
+  page: number = 1,
+  limit: number = 20
+): Promise<MarketplacePluginDB[]> {
+  let sql = `SELECT * FROM marketplace_plugins
+             WHERE status = 'approved' AND visibility = 'public'
+             AND (name LIKE ? OR description LIKE ? OR short_description LIKE ?)`
+  const params: any[] = [`%${query}%`, `%${query}%`, `%${query}%`]
+
+  if (category) {
+    sql += ` AND category = ?`
+    params.push(category)
+  }
+
+  switch (sort) {
+    case 'popular':
+      sql += ` ORDER BY download_count DESC`
+      break
+    case 'newest':
+      sql += ` ORDER BY created_at DESC`
+      break
+    case 'rating':
+      sql += ` ORDER BY rating_avg DESC`
+      break
+    default:
+      sql += ` ORDER BY download_count DESC`
+  }
+
+  sql += ` LIMIT ${parseInt(String(limit))} OFFSET ${(page - 1) * limit}`
+
+  return await query<MarketplacePluginDB>(sql, params)
+}
+
+// Get single marketplace plugin
+export async function getMarketplacePluginById(id: string): Promise<MarketplacePluginDB | null> {
+  return await queryOne<MarketplacePluginDB>(
+    'SELECT * FROM marketplace_plugins WHERE id = ?',
+    [id]
+  )
+}
+
+// Publish plugin to marketplace
+export async function publishPluginToMarketplace(data: {
+  name: string
+  description: string
+  shortDescription?: string
+  version?: string
+  authorId: string
+  authorName?: string
+  icon?: string
+  category: string
+  type?: 'builtin' | 'mcp' | 'http' | 'webhook'
+  manifest: any
+  code?: string
+  mcpConfig?: any
+  readme?: string
+  tags?: string[]
+  screenshots?: string[]
+}): Promise<string> {
+  const id = `market-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`
+
+  await execute(
+    `INSERT INTO marketplace_plugins
+     (id, name, description, short_description, version, author_id, author_name,
+      icon, category, type, manifest, code, mcp_config, readme, tags, screenshots, status, visibility)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', 'public')`,
+    [
+      id,
+      data.name,
+      data.description,
+      data.shortDescription || null,
+      data.version || '1.0.0',
+      data.authorId,
+      data.authorName || null,
+      data.icon || 'Puzzle',
+      data.category,
+      data.type || 'builtin',
+      JSON.stringify(data.manifest),
+      data.code || null,
+      data.mcpConfig ? JSON.stringify(data.mcpConfig) : null,
+      data.readme || null,
+      data.tags ? JSON.stringify(data.tags) : null,
+      data.screenshots ? JSON.stringify(data.screenshots) : null,
+    ]
+  )
+
+  return id
+}
+
+// Install plugin from marketplace to local
+export async function installPluginFromMarketplace(
+  marketplacePluginId: string,
+  userId: string,
+  pluginData: {
+    name: string
+    description?: string
+    version?: string
+    icon?: string
+    category: string
+    type: 'builtin' | 'mcp' | 'http' | 'webhook'
+    manifest?: any
+    code?: string
+    mcpConfig?: any
+  }
+): Promise<string> {
+  const localPluginId = `plugin-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`
+
+  // Create local plugin
+  await createPlugin({
+    id: localPluginId,
+    userId,
+    name: pluginData.name,
+    description: pluginData.description,
+    version: pluginData.version,
+    icon: pluginData.icon,
+    category: pluginData.category,
+    type: pluginData.type,
+    manifest: pluginData.manifest,
+    code: pluginData.code,
+    mcpConfig: pluginData.mcpConfig,
+    status: 'active',
+  })
+
+  // Record installation
+  const installId = `install-${Date.now()}`
+  await execute(
+    `INSERT INTO user_installed_plugins (id, user_id, marketplace_plugin_id, local_plugin_id, version)
+     VALUES (?, ?, ?, ?, ?)`,
+    [installId, userId, marketplacePluginId, localPluginId, pluginData.version || '1.0.0']
+  )
+
+  // Update marketplace install count
+  await execute(
+    `UPDATE marketplace_plugins SET install_count = install_count + 1 WHERE id = ?`,
+    [marketplacePluginId]
+  )
+
+  return localPluginId
+}
+
+// Get user's installed plugins
+export async function getUserInstalledPlugins(userId: string): Promise<any[]> {
+  const rows = await query<any>(
+    `SELECT ui.*, mp.name as marketplace_name, mp.icon as marketplace_icon,
+            mp.rating_avg, p.name as local_name, p.status as local_status
+     FROM user_installed_plugins ui
+     LEFT JOIN marketplace_plugins mp ON ui.marketplace_plugin_id = mp.id
+     LEFT JOIN plugins p ON ui.local_plugin_id = p.id
+     WHERE ui.user_id = ?
+     ORDER BY ui.installed_at DESC`,
+    [userId]
+  )
+  return rows
+}
+
+// Uninstall marketplace plugin
+export async function uninstallMarketplacePlugin(
+  marketplacePluginId: string,
+  userId: string
+): Promise<void> {
+  // Get local plugin id
+  const row = await queryOne<any>(
+    `SELECT local_plugin_id FROM user_installed_plugins
+     WHERE marketplace_plugin_id = ? AND user_id = ?`,
+    [marketplacePluginId, userId]
+  )
+
+  if (row) {
+    // Delete local plugin
+    await deletePlugin(row.local_plugin_id)
+
+    // Remove installation record
+    await execute(
+      `DELETE FROM user_installed_plugins WHERE marketplace_plugin_id = ? AND user_id = ?`,
+      [marketplacePluginId, userId]
+    )
+
+    // Decrement install count
+    await execute(
+      `UPDATE marketplace_plugins SET install_count = GREATEST(0, install_count - 1) WHERE id = ?`,
+      [marketplacePluginId]
+    )
+  }
+}
+
+// Rate marketplace plugin
+export async function rateMarketplacePlugin(
+  marketplacePluginId: string,
+  userId: string,
+  data: {
+    rating: number
+    review?: string
+    isRecommended?: boolean
+  }
+): Promise<void> {
+  const id = `review-${Date.now()}`
+
+  await execute(
+    `INSERT INTO plugin_reviews (id, marketplace_plugin_id, user_id, rating, review, is_recommended)
+     VALUES (?, ?, ?, ?, ?, ?)
+     ON DUPLICATE KEY UPDATE
+     rating = VALUES(rating), review = VALUES(review), is_recommended = VALUES(is_recommended), updated_at = NOW()`,
+    [id, marketplacePluginId, userId, data.rating, data.review || null, data.isRecommended !== false]
+  )
+
+  // Update average rating
+  await execute(
+    `UPDATE marketplace_plugins
+     SET rating_avg = (SELECT AVG(rating) FROM plugin_reviews WHERE marketplace_plugin_id = ?),
+         rating_count = (SELECT COUNT(*) FROM plugin_reviews WHERE marketplace_plugin_id = ?)
+     WHERE id = ?`,
+    [marketplacePluginId, marketplacePluginId, marketplacePluginId]
+  )
+}
+
+// Get plugin reviews
+export async function getPluginReviews(marketplacePluginId: string, limit: number = 20): Promise<any[]> {
+  return await query<any>(
+    `SELECT r.*, u.username, u.display_name, u.avatar_url
+     FROM plugin_reviews r
+     LEFT JOIN local_users u ON r.user_id = u.id
+     WHERE r.marketplace_plugin_id = ?
+     ORDER BY r.created_at DESC
+     LIMIT ${parseInt(String(limit))}`,
+    [marketplacePluginId]
+  )
+}
+
+// Increment plugin download/view
+export async function incrementPluginDownload(
+  marketplacePluginId: string,
+  userId?: string,
+  source: string = 'view'
+): Promise<void> {
+  const id = `dl-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`
+
+  await execute(
+    `INSERT INTO plugin_downloads (id, marketplace_plugin_id, user_id, source)
+     VALUES (?, ?, ?, ?)`,
+    [id, marketplacePluginId, userId || null, source]
+  )
+
+  // Increment count only for installs
+  if (source === 'install') {
+    await execute(
+      `UPDATE marketplace_plugins SET download_count = download_count + 1 WHERE id = ?`,
+      [marketplacePluginId]
+    )
+  }
+}
+
+// Get recommended plugins (simple algorithm based on popularity and ratings)
+export async function getRecommendedPlugins(userId: string): Promise<any[]> {
+  // Get user's installed categories
+  const userPlugins = await getUserInstalledPlugins(userId)
+  const installedIds = userPlugins.map((p: any) => p.marketplace_plugin_id)
+
+  let sql = `SELECT * FROM marketplace_plugins
+             WHERE status = 'approved' AND visibility = 'public'`
+
+  if (installedIds.length > 0) {
+    const placeholders = installedIds.map(() => '?').join(',')
+    sql += ` AND id NOT IN (${placeholders})`
+  }
+
+  sql += ` ORDER BY (rating_avg * 0.6 + LEAST(download_count / 100, 5) * 0.4) DESC
+           LIMIT 10`
+
+  return await query<MarketplacePluginDB>(sql, installedIds)
 }

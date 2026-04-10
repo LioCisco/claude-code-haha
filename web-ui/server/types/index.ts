@@ -325,3 +325,37 @@ export interface SalesQueryParams {
 
 // ==================== 工作流相关类型 ====================
 export * from './workflow';
+
+// ==================== 记忆系统类型 ====================
+
+export type MemoryType = 'user' | 'feedback' | 'project' | 'reference';
+
+export interface Memory {
+  id: string;
+  user_id: string;
+  project_id?: string;
+  name: string;
+  description: string;
+  type: MemoryType;
+  content: string;
+  tags?: string[];
+  is_active: boolean;
+  created_at: Date;
+  updated_at: Date;
+}
+
+export interface MemoryInput {
+  name: string;
+  description: string;
+  type: MemoryType;
+  content: string;
+  tags?: string[];
+}
+
+export interface MemoryUpdateInput {
+  name?: string;
+  description?: string;
+  content?: string;
+  tags?: string[];
+  is_active?: boolean;
+}

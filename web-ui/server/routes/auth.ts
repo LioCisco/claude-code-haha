@@ -181,11 +181,19 @@ export const authRoutes = new Elysia({ prefix: '/api/auth' })
   .post('/login', async ({ body }): Promise<ApiResponse> => {
     const { username, password } = body as LoginRequest
 
-    // 查询用户
-    const user = await queryOne<LocalUser>(
+    // 查询用户（支持用户名或手机号登录）
+    let user = await queryOne<LocalUser>(
       'SELECT * FROM local_users WHERE username = ?',
       [username]
     )
+
+    // 如果没找到，尝试用手机号查询
+    if (!user) {
+      user = await queryOne<LocalUser>(
+        'SELECT * FROM local_users WHERE phone = ?',
+        [username]
+      )
+    }
 
     if (!user) {
       return {
@@ -232,7 +240,11 @@ export const authRoutes = new Elysia({ prefix: '/api/auth' })
       success: true,
       message: '登录成功',
       data: {
-        user: userWithoutPassword,
+        user: {
+          ...userWithoutPassword,
+          display_name: user.display_name,
+          company_name: user.company_name,
+        },
         token
       }
     }

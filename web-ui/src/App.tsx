@@ -12,6 +12,10 @@ import ScheduledTasks from './pages/ScheduledTasks'
 import TaskExecutionLog from './pages/TaskExecutionLog'
 import WorkflowList from './pages/workflow/WorkflowList'
 import WorkflowEditor from './pages/workflow/WorkflowEditor'
+import Memories from './pages/Memories'
+import Plugins from './pages/Plugins'
+import PluginMarketplace from './pages/PluginMarketplace'
+import PluginMarketplaceDetail from './pages/PluginMarketplaceDetail'
 import Login from './pages/Login'
 import ProtectedRoute from './components/auth/ProtectedRoute'
 
@@ -31,6 +35,10 @@ function App() {
         <Route path="scheduled-tasks/:taskId/log" element={<TaskExecutionLog />} />
         <Route path="workflows" element={<WorkflowList />} />
         <Route path="workflow/:id" element={<WorkflowEditor />} />
+        <Route path="memories" element={<Memories />} />
+        <Route path="plugins" element={<Plugins />} />
+        <Route path="marketplace" element={<PluginMarketplace />} />
+        <Route path="marketplace/:id" element={<PluginMarketplaceDetail />} />
         <Route path="settings" element={<Settings />} />
       </Route>
     </Routes>

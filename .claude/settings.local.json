@@ -44,7 +44,17 @@
       "Bash(sed -i '' \"s|from '../utils/template'|from '../lib/template'|g\" *.ts)",
       "Bash(sed -i '' \"s|from '../utils/sandbox'|from '../lib/sandbox'|g\" *.ts)",
       "Bash(1)",
-      "Bash(grep -E \"port.*5173|server.*port\" vite.config.*)"
+      "Bash(grep -E \"port.*5173|server.*port\" vite.config.*)",
+      "Bash(pkill -f \"vite\")",
+      "Bash(2>&1)",
+      "Bash(mysql -u root -p123456 -e \"USE \\\\`kane-work\\\\`; SHOW TABLES LIKE '%memory%';\")",
+      "Bash(tee /tmp/auth.json)",
+      "Bash(jq)",
+      "Bash(bun:*)",
+      "Bash(mysql:*)",
+      "Bash(npx vite:*)",
+      "WebFetch(domain:claude.com)",
+      "WebSearch"
     ]
   }
 }

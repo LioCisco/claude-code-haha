@@ -11,6 +11,9 @@ import {
   Zap,
   Clock,
   GitBranch,
+  Brain,
+  Puzzle,
+  ShoppingBag,
 } from 'lucide-react'
 import { cn } from '@/lib/utils'
 
@@ -20,6 +23,8 @@ const navigation = [
   { name: 'AI 团队', to: '/agents', icon: Bot },
   { name: '技能库', to: '/skills', icon: Wrench },
   { name: '工作流', to: '/workflows', icon: GitBranch },
+  { name: '记忆管理', to: '/memories', icon: Brain },
+  { name: '插件', to: '/plugins', icon: Puzzle },
   { name: '店铺搭建', to: '/store-builder', icon: Store },
   { name: '数据分析', to: '/analytics', icon: BarChart3 },
   { name: '定时任务', to: '/scheduled-tasks', icon: Clock },

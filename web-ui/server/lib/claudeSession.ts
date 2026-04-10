@@ -3,7 +3,10 @@ import { exec } from 'child_process'
 import { promisify } from 'util'
 import { readFile, writeFile, readdir, stat } from 'fs/promises'
 import { glob } from 'glob'
-import { saveMessage, getSessionMessages, createSession, getSession, updateSessionTitle } from '../db'
+import { saveMessage, getSessionMessages, createSession, getSession, updateSessionTitle, getUserMemories } from '../db'
+import { findRelevantMemories, extractMemoryFromConversation, generateMemorySystemPrompt } from './memoryAI'
+import { syncMemoriesToFiles } from './memorySync'
+import { getPluginToolDefinitions } from './pluginEngine'
 
 const execAsync = promisify(exec)
 
@@ -279,6 +282,8 @@ export class ClaudeSession {
   private maxTurns = 20
   private sessionId: string
   private dbEnabled: boolean
+  private userId: string | null = null
+  private relevantMemories: Array<{ name: string; content: string }> = []
 
   constructor(options: {
     apiKey: string
@@ -286,6 +291,7 @@ export class ClaudeSession {
     model?: string
     sessionId: string
     dbEnabled?: boolean
+    userId?: string
     onEvent: (event: ChatEvent) => void | Promise<void>
   }) {
     this.anthropic = new Anthropic({
@@ -295,6 +301,7 @@ export class ClaudeSession {
     this.model = options.model || 'kimi-k2.5'
     this.sessionId = options.sessionId
     this.dbEnabled = options.dbEnabled ?? false
+    this.userId = options.userId || null
     this.onEvent = options.onEvent
   }
 
@@ -362,6 +369,24 @@ export class ClaudeSession {
     // Check if this is the first user message (for title generation)
     const isFirstMessage = this.messages.filter(m => m.role === 'user').length === 0
 
+    // Fetch relevant memories if userId is available
+    let enhancedSystemPrompt = systemPrompt
+    if (this.userId && this.dbEnabled) {
+      try {
+        const relevant = await findRelevantMemories(this.userId, content, 3)
+        if (relevant.length > 0) {
+          this.relevantMemories = relevant.map(m => ({ name: m.name, content: m.content }))
+          const memoryPrompt = generateMemorySystemPrompt(this.relevantMemories)
+          enhancedSystemPrompt = systemPrompt
+            ? `${systemPrompt}\n\n${memoryPrompt}`
+            : memoryPrompt
+          console.log(`[ClaudeSession] Added ${relevant.length} relevant memories to context`)
+        }
+      } catch (err) {
+        console.error('[ClaudeSession] Failed to fetch relevant memories:', err)
+      }
+    }
+
     // Add to memory
     this.messages.push({ role: 'user', content })
 
@@ -382,11 +407,51 @@ export class ClaudeSession {
     }
 
     try {
-      await this.runLoop(systemPrompt, agentInfo)
+      await this.runLoop(enhancedSystemPrompt, agentInfo)
+      // Try to extract memory after conversation completes
+      await this.tryExtractMemory()
     } catch (err) {
       console.error('[ClaudeSession] submitUserMessage error:', err)
       const msg = err instanceof Error ? err.message : String(err)
       await this.onEvent({ type: 'error', message: `处理失败: ${msg}` })
+    }
+  }
+
+  // Try to extract memory from recent conversation
+  private async tryExtractMemory() {
+    if (!this.userId || !this.dbEnabled) return
+
+    // Get last 6 messages
+    const recentMessages = this.messages.slice(-6)
+    if (recentMessages.length < 2) return
+
+    const conversation = recentMessages.map(m => ({
+      role: m.role,
+      content: typeof m.content === 'string'
+        ? m.content
+        : JSON.stringify(m.content)
+    }))
+
+    try {
+      const result = await extractMemoryFromConversation(this.userId, conversation)
+      if (result.shouldExtract) {
+        console.log(`[ClaudeSession] Extracted memory: ${result.name}`)
+        // Sync to file system
+        await syncMemoriesToFiles(this.userId)
+        // Notify client about extracted memory
+        await this.onEvent({
+          type: 'memory_extracted',
+          memory: {
+            name: result.name,
+            description: result.description,
+            type: result.type,
+            content: result.content,
+            tags: result.tags
+          }
+        } as any)
+      }
+    } catch (err) {
+      console.error('[ClaudeSession] Failed to extract memory:', err)
     }
   }
 
@@ -438,7 +503,7 @@ export class ClaudeSession {
             max_tokens: 4096,
             system: systemPrompt,
             messages: this.messages,
-            tools: TOOL_DEFINITIONS,
+            tools: [...TOOL_DEFINITIONS, ...getPluginToolDefinitions()],
           })
         } catch (err: any) {
           console.error('[ClaudeSession] API Error:', err)
@@ -610,8 +675,28 @@ export class ClaudeSession {
           result = answer
           break
         }
-        default:
-          result = `Tool "${name}" is not implemented yet.`
+        default: {
+          // Try to execute as plugin tool
+          const { executeToolByName } = await import('./pluginEngine')
+          const pluginResult = await executeToolByName(name, input, {
+            userId: this.userId || undefined,
+            sessionId: this.sessionId,
+          })
+
+          if (pluginResult) {
+            if (pluginResult.success) {
+              result = typeof pluginResult.data === 'string'
+                ? pluginResult.data
+                : JSON.stringify(pluginResult.data, null, 2)
+            } else {
+              result = pluginResult.error || 'Plugin execution failed'
+              await this.onEvent({ type: 'tool_result', name, result, isError: true })
+              return { result, isError: true }
+            }
+          } else {
+            result = `Tool "${name}" is not implemented yet.`
+          }
+        }
       }
 
       await this.onEvent({ type: 'tool_result', name, result, isError: false })

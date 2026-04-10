@@ -703,3 +703,227 @@ CREATE TABLE IF NOT EXISTS workflow_publish_history (
     FOREIGN KEY (workflow_id) REFERENCES workflows(id) ON DELETE CASCADE,
     FOREIGN KEY (user_id) REFERENCES local_users(id) ON DELETE CASCADE
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='工作流发布历史表';
+
+-- ==================== 记忆系统表 ====================
+
+CREATE TABLE IF NOT EXISTS memories (
+  id VARCHAR(36) PRIMARY KEY,
+  user_id VARCHAR(36) NOT NULL,
+  project_id VARCHAR(36) NULL,
+  name VARCHAR(255) NOT NULL,
+  description TEXT,
+  type ENUM('user', 'feedback', 'project', 'reference') NOT NULL,
+  content TEXT NOT NULL,
+  tags JSON,
+  is_active BOOLEAN DEFAULT TRUE,
+  created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+  updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  INDEX idx_user_id (user_id),
+  INDEX idx_project_id (project_id),
+  INDEX idx_type (type),
+  INDEX idx_is_active (is_active)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+-- ==================== Claude Code 插件系统表 ====================
+
+-- 插件表
+CREATE TABLE IF NOT EXISTS plugins (
+  id VARCHAR(36) PRIMARY KEY,
+  user_id VARCHAR(36) DEFAULT NULL COMMENT '用户ID (NULL 为系统插件)',
+  name VARCHAR(100) NOT NULL COMMENT '插件名称',
+  description TEXT COMMENT '插件描述',
+  version VARCHAR(20) DEFAULT '1.0.0' COMMENT '版本号',
+  author VARCHAR(100) COMMENT '作者',
+  icon VARCHAR(50) DEFAULT 'Puzzle' COMMENT '图标名称',
+  category VARCHAR(50) DEFAULT 'utility' COMMENT '分类: utility, integration, automation, ai',
+
+  -- 插件类型和配置
+  type ENUM('builtin', 'mcp', 'http', 'webhook') NOT NULL DEFAULT 'builtin' COMMENT '插件类型',
+  config JSON COMMENT '插件配置',
+
+  -- 插件清单 (定义提供的工具、钩子、UI 组件等)
+  manifest JSON COMMENT '插件清单 {tools: [], hooks: [], uiComponents: [], permissions: []}',
+
+  -- 代码/脚本 (builtin 类型使用)
+  code TEXT COMMENT '插件代码 (JavaScript)',
+
+  -- MCP 配置 (mcp 类型使用)
+  mcp_config JSON COMMENT 'MCP 服务配置 {transport, command, args, url, env}',
+
+  -- 状态
+  status ENUM('active', 'inactive', 'error') DEFAULT 'inactive' COMMENT '插件状态',
+  is_system BOOLEAN DEFAULT FALSE COMMENT '是否为系统内置插件',
+  is_enabled BOOLEAN DEFAULT TRUE COMMENT '是否启用',
+
+  -- 统计
+  usage_count INT DEFAULT 0 COMMENT '使用次数',
+  last_used_at TIMESTAMP NULL COMMENT '最后使用时间',
+  last_error TEXT COMMENT '最后错误信息',
+
+  created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+  updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+
+  INDEX idx_user_id (user_id),
+  INDEX idx_status (status),
+  INDEX idx_type (type),
+  INDEX idx_category (category),
+  INDEX idx_is_system (is_system),
+  INDEX idx_is_enabled (is_enabled)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='Claude Code 插件表';
+
+-- 插件执行日志表
+CREATE TABLE IF NOT EXISTS plugin_executions (
+  id VARCHAR(36) PRIMARY KEY,
+  plugin_id VARCHAR(36) NOT NULL COMMENT '插件ID',
+  user_id VARCHAR(36) COMMENT '用户ID',
+  session_id VARCHAR(64) COMMENT '会话ID',
+
+  -- 执行信息
+  tool_name VARCHAR(100) COMMENT '调用的工具名',
+  params JSON COMMENT '调用参数',
+  result JSON COMMENT '执行结果',
+
+  -- 状态
+  status ENUM('success', 'error', 'timeout') NOT NULL,
+  error_message TEXT COMMENT '错误信息',
+
+  -- 性能
+  duration_ms INT COMMENT '执行耗时(毫秒)',
+
+  created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+
+  INDEX idx_plugin_id (plugin_id),
+  INDEX idx_user_id (user_id),
+  INDEX idx_session_id (session_id),
+  INDEX idx_status (status),
+  INDEX idx_created_at (created_at),
+  FOREIGN KEY (plugin_id) REFERENCES plugins(id) ON DELETE CASCADE
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='插件执行日志表';
+
+-- 插件钩子注册表 (用于钩子管理)
+CREATE TABLE IF NOT EXISTS plugin_hooks (
+  id VARCHAR(36) PRIMARY KEY,
+  plugin_id VARCHAR(36) NOT NULL COMMENT '插件ID',
+  hook_name VARCHAR(100) NOT NULL COMMENT '钩子名称',
+  hook_type ENUM('before_message', 'after_message', 'before_tool', 'after_tool', 'on_error') NOT NULL COMMENT '钩子类型',
+  priority INT DEFAULT 100 COMMENT '优先级 (数字越小优先级越高)',
+  config JSON COMMENT '钩子配置',
+  is_active BOOLEAN DEFAULT TRUE,
+  created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+
+  INDEX idx_plugin_id (plugin_id),
+  INDEX idx_hook_name (hook_name),
+  INDEX idx_hook_type (hook_type),
+  INDEX idx_is_active (is_active),
+  FOREIGN KEY (plugin_id) REFERENCES plugins(id) ON DELETE CASCADE
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='插件钩子表';
+
+-- 注：示例插件数据通过代码插入，避免 SQL 多行字符串问题
+
+-- ==================== 插件市场表 ====================
+
+-- 插件市场主表
+CREATE TABLE IF NOT EXISTS marketplace_plugins (
+  id VARCHAR(36) PRIMARY KEY,
+  name VARCHAR(100) NOT NULL COMMENT '插件名称',
+  description TEXT COMMENT '插件描述',
+  short_description VARCHAR(200) COMMENT '简短描述（列表展示）',
+  version VARCHAR(20) DEFAULT '1.0.0' COMMENT '版本号',
+  author_id VARCHAR(36) NOT NULL COMMENT '作者用户ID',
+  author_name VARCHAR(100) COMMENT '作者显示名',
+  author_avatar VARCHAR(500) COMMENT '作者头像',
+
+  -- 插件内容
+  icon VARCHAR(50) DEFAULT 'Puzzle' COMMENT '图标名称',
+  category VARCHAR(50) DEFAULT 'utility' COMMENT '分类',
+  type ENUM('builtin', 'mcp', 'http', 'webhook') NOT NULL DEFAULT 'builtin',
+  manifest JSON COMMENT '插件清单',
+  code TEXT COMMENT '插件代码（发布时打包）',
+  mcp_config JSON COMMENT 'MCP 配置',
+
+  -- 展示信息
+  screenshots JSON COMMENT '截图URL列表',
+  readme TEXT COMMENT '详细说明（Markdown）',
+  tags JSON COMMENT '标签列表',
+
+  -- 状态
+  status ENUM('pending', 'approved', 'rejected', 'deprecated') DEFAULT 'pending' COMMENT '审核状态',
+  visibility ENUM('public', 'unlisted', 'private') DEFAULT 'public' COMMENT '可见性',
+
+  -- 统计
+  download_count INT DEFAULT 0 COMMENT '下载次数',
+  rating_avg DECIMAL(2, 1) DEFAULT 5.0 COMMENT '平均评分',
+  rating_count INT DEFAULT 0 COMMENT '评分数量',
+  install_count INT DEFAULT 0 COMMENT '安装次数',
+
+  -- 关联本地插件ID（安装后回填）
+  local_plugin_id VARCHAR(36) COMMENT '对应本地插件ID',
+
+  created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+  updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  approved_at TIMESTAMP NULL COMMENT '审核通过时间',
+
+  INDEX idx_author_id (author_id),
+  INDEX idx_status (status),
+  INDEX idx_visibility (visibility),
+  INDEX idx_category (category),
+  INDEX idx_download_count (download_count),
+  INDEX idx_rating_avg (rating_avg),
+  FULLTEXT INDEX idx_search (name, description, short_description)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='插件市场表';
+
+-- 插件评分表
+CREATE TABLE IF NOT EXISTS plugin_reviews (
+  id VARCHAR(36) PRIMARY KEY,
+  marketplace_plugin_id VARCHAR(36) NOT NULL COMMENT '市场插件ID',
+  user_id VARCHAR(36) NOT NULL COMMENT '用户ID',
+  rating INT NOT NULL COMMENT '评分 1-5',
+  review TEXT COMMENT '评论内容',
+  is_recommended BOOLEAN DEFAULT TRUE COMMENT '是否推荐',
+  helpful_count INT DEFAULT 0 COMMENT '有用数',
+  created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+  updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+
+  UNIQUE KEY unique_user_plugin (marketplace_plugin_id, user_id),
+  INDEX idx_plugin_id (marketplace_plugin_id),
+  INDEX idx_user_id (user_id),
+  INDEX idx_rating (rating),
+  FOREIGN KEY (marketplace_plugin_id) REFERENCES marketplace_plugins(id) ON DELETE CASCADE
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='插件评分表';
+
+-- 插件下载记录表
+CREATE TABLE IF NOT EXISTS plugin_downloads (
+  id VARCHAR(36) PRIMARY KEY,
+  marketplace_plugin_id VARCHAR(36) NOT NULL COMMENT '市场插件ID',
+  user_id VARCHAR(36) COMMENT '用户ID（未登录为空）',
+  ip_address VARCHAR(45) COMMENT 'IP地址',
+  user_agent TEXT COMMENT '用户代理',
+  source VARCHAR(50) COMMENT '来源：marketplace, search, recommendation',
+  created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+
+  INDEX idx_plugin_id (marketplace_plugin_id),
+  INDEX idx_user_id (user_id),
+  INDEX idx_created_at (created_at),
+  FOREIGN KEY (marketplace_plugin_id) REFERENCES marketplace_plugins(id) ON DELETE CASCADE
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='插件下载记录表';
+
+-- 用户已安装插件表（关联 market 和本地插件）
+CREATE TABLE IF NOT EXISTS user_installed_plugins (
+  id VARCHAR(36) PRIMARY KEY,
+  user_id VARCHAR(36) NOT NULL COMMENT '用户ID',
+  marketplace_plugin_id VARCHAR(36) COMMENT '市场插件ID（可选，本地插件为空）',
+  local_plugin_id VARCHAR(36) NOT NULL COMMENT '本地插件ID',
+  version VARCHAR(20) COMMENT '安装时的版本',
+  is_auto_update BOOLEAN DEFAULT TRUE COMMENT '是否自动更新',
+  installed_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+  updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+
+  UNIQUE KEY unique_user_plugin (user_id, marketplace_plugin_id),
+  INDEX idx_user_id (user_id),
+  INDEX idx_marketplace_plugin_id (marketplace_plugin_id),
+  INDEX idx_local_plugin_id (local_plugin_id),
+  FOREIGN KEY (user_id) REFERENCES local_users(id) ON DELETE CASCADE,
+  FOREIGN KEY (marketplace_plugin_id) REFERENCES marketplace_plugins(id) ON DELETE SET NULL
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='用户已安装插件表';
+
+-- 注：示例市场插件数据通过代码插入，避免 SQL 多行字符串问题

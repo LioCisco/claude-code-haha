@@ -1,13 +1,20 @@
 import { Bell, Search, Plus, LogOut, User } from 'lucide-react'
-import { useState } from 'react'
+import { useState, useEffect } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { useAuthStore } from '@/store/useAuthStore'
+import { useSettingsStore } from '@/store/useSettingsStore'
 
 export default function Header() {
   const [showCommandPalette, setShowCommandPalette] = useState(false)
   const [showUserMenu, setShowUserMenu] = useState(false)
   const { user, logout } = useAuthStore()
+  const { settings, fetchSettings } = useSettingsStore()
   const navigate = useNavigate()
+
+  // Fetch settings on mount to get avatar and display name
+  useEffect(() => {
+    fetchSettings()
+  }, [fetchSettings])
 
   const handleLogout = () => {
     logout()
@@ -51,12 +58,20 @@ export default function Header() {
             className="flex items-center gap-3 pl-4 border-l border-gray-200 hover:bg-gray-50 rounded-lg py-1 pr-1 transition-colors"
           >
             <div className="text-right hidden sm:block">
-              <p className="text-sm font-medium text-gray-900">{user?.username || '未登录'}</p>
-              <p className="text-xs text-gray-500">{user?.plan || 'Free'}</p>
+              <p className="text-sm font-medium text-gray-900">{settings?.displayName || user?.display_name || user?.username || '未登录'}</p>
+              <p className="text-xs text-gray-500">{settings?.subscription?.plan || user?.plan || 'Free'}</p>
             </div>
-            <div className="w-9 h-9 bg-gradient-to-br from-ali-400 to-ali-600 rounded-full flex items-center justify-center text-white font-medium text-sm">
-              {user?.username ? user.username.charAt(0).toUpperCase() : <User className="w-4 h-4" />}
-            </div>
+            {settings?.avatarUrl ? (
+              <img
+                src={settings.avatarUrl.startsWith('http') ? settings.avatarUrl : `http://localhost:8080${settings.avatarUrl}`}
+                alt="Avatar"
+                className="w-9 h-9 rounded-full object-cover border-2 border-white shadow-sm"
+              />
+            ) : (
+              <div className="w-9 h-9 bg-gradient-to-br from-ali-400 to-ali-600 rounded-full flex items-center justify-center text-white font-medium text-sm">
+                {(settings?.displayName || user?.display_name || user?.username || '?').charAt(0).toUpperCase()}
+              </div>
+            )}
           </button>
 
           {/* User Menu Dropdown */}

@@ -1,4 +1,5 @@
 import { useRef, useEffect, useState, useCallback } from 'react'
+import { useNavigate } from 'react-router-dom'
 import {
   Send,
   Paperclip,
@@ -14,9 +15,14 @@ import {
   Trash2,
   Edit2,
   Check,
+  Brain,
+  Lightbulb,
 } from 'lucide-react'
 import { useChatStore } from '@/store/useChatStore'
 import { cn, formatTime } from '@/lib/utils'
+import { getChatSessions, createChatSession, updateChatSession, deleteChatSession } from '@/api/chat'
+import { getRelevantMemories } from '@/api/memories'
+import type { Memory } from '@/api/memories'
 import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
 
@@ -39,19 +45,43 @@ type ChatEvent =
   | { type: 'done' }
   | { type: 'error'; message: string }
   | { type: 'title_updated'; title: string }
+  | { type: 'memory_extracted'; memory: { name: string; description: string; type: string; content: string; tags: string[] } }
+  | { type: 'pong' }
+
+// Slash commands definition
+interface SlashCommand {
+  command: string
+  description: string
+  usage?: string
+  icon?: string
+}
+
+const SLASH_COMMANDS: SlashCommand[] = [
+  { command: '/skill', description: '执行技能', usage: '/skill <技能名> [参数]', icon: '⚡' },
+  { command: '/model', description: '切换AI模型', usage: '/model <模型名>', icon: '🤖' },
+  { command: '/agent', description: '切换智能体', usage: '/agent <智能体名>', icon: '👤' },
+  { command: '/social', description: '发布社媒内容', usage: '/social <平台> <主题> [--image]', icon: '📱' },
+  { command: '/clear', description: '清空当前对话', usage: '/clear', icon: '🧹' },
+  { command: '/help', description: '查看帮助', usage: '/help [命令]', icon: '❓' },
+]
 
 // Singleton WebSocket manager outside React
 class WsManager {
   private ws: WebSocket | null = null
   private listeners: Array<(data: ChatEvent) => void> = []
   private reconnectTimer: ReturnType<typeof setTimeout> | null = null
-  private isConnecting = false
+  private pingTimer: ReturnType<typeof setInterval> | null = null
+  private _isConnecting = false
   private currentSessionId: string | null = null
   private pendingMessages: unknown[] = []
+  private reconnectAttempts = 0
+  private maxReconnectAttempts = 10
+  private baseReconnectDelay = 1000
 
   connect(sessionId?: string) {
     // If already connecting to the same session, don't reconnect
-    if (this.isConnecting && this.currentSessionId === sessionId) {
+    if (this._isConnecting && this.currentSessionId === sessionId) {
+      console.log('[WsManager] Already connecting to session:', sessionId)
       return
     }
 
@@ -63,19 +93,36 @@ class WsManager {
 
     // If already connected to the same session, do nothing
     if (this.ws?.readyState === WebSocket.OPEN && this.currentSessionId === sessionId) {
+      console.log('[WsManager] Already connected to session:', sessionId)
       return
     }
 
-    this.isConnecting = true
+    this._isConnecting = true
     this.currentSessionId = sessionId || null
 
     console.log('[WsManager] Connecting... sessionId:', sessionId)
-    const ws = new WebSocket(`ws://localhost:8080/ws/chat${sessionId ? `?sessionId=${sessionId}` : ''}`)
+    // Get token from localStorage
+    let token: string | null = null
+    try {
+      const stored = localStorage.getItem('accio-auth-store')
+      if (stored) {
+        const parsed = JSON.parse(stored)
+        token = parsed.state?.token || null
+      }
+    } catch {
+      // ignore
+    }
+    const wsUrl = `ws://localhost:8080/ws/chat?${sessionId ? `sessionId=${sessionId}&` : ''}${token ? `token=${token}` : ''}`
+    const ws = new WebSocket(wsUrl)
     this.ws = ws
 
     ws.onopen = () => {
       console.log('[WsManager] Connected, sessionId:', sessionId)
       this.isConnecting = false
+      this.reconnectAttempts = 0 // Reset reconnect attempts on successful connection
+
+      // Start ping to keep connection alive
+      this.startPing()
 
       // Send any pending messages
       while (this.pendingMessages.length > 0) {
@@ -95,31 +142,76 @@ class WsManager {
       this.isConnecting = false
     }
 
-    ws.onclose = () => {
-      console.log('[WsManager] Closed')
+    ws.onclose = (event) => {
+      console.log('[WsManager] Closed, code:', event.code, 'reason:', event.reason)
+      this.stopPing()
       this.ws = null
       this.isConnecting = false
+
+      // Don't reconnect if explicitly closed (code 1000 or 1001)
+      if (event.code === 1000 || event.code === 1001) {
+        console.log('[WsManager] Explicit close, not reconnecting')
+        return
+      }
+
       // Auto reconnect only if we have a current session and no timer
       if (this.currentSessionId && !this.reconnectTimer) {
-        this.reconnectTimer = setTimeout(() => {
-          this.reconnectTimer = null
-          this.connect(this.currentSessionId || undefined)
-        }, 3000)
+        this.scheduleReconnect()
       }
     }
   }
 
-  disconnect(clearSession = true) {
-    if (this.ws) {
-      this.ws.close()
-      this.ws = null
+  private startPing() {
+    this.stopPing()
+    this.pingTimer = setInterval(() => {
+      if (this.ws?.readyState === WebSocket.OPEN) {
+        this.ws.send(JSON.stringify({ type: 'ping' }))
+      }
+    }, 30000) // Ping every 30 seconds
+  }
+
+  private stopPing() {
+    if (this.pingTimer) {
+      clearInterval(this.pingTimer)
+      this.pingTimer = null
     }
+  }
+
+  private scheduleReconnect() {
+    if (this.reconnectAttempts >= this.maxReconnectAttempts) {
+      console.log('[WsManager] Max reconnect attempts reached')
+      return
+    }
+
+    this.reconnectAttempts++
+    const delay = Math.min(
+      this.baseReconnectDelay * Math.pow(2, this.reconnectAttempts - 1),
+      30000 // Max 30 seconds
+    )
+    console.log(`[WsManager] Reconnecting in ${delay}ms (attempt ${this.reconnectAttempts})`)
+
+    this.reconnectTimer = setTimeout(() => {
+      this.reconnectTimer = null
+      this.connect(this.currentSessionId || undefined)
+    }, delay)
+  }
+
+  disconnect(clearSession = true) {
+    this.stopPing()
     if (this.reconnectTimer) {
       clearTimeout(this.reconnectTimer)
       this.reconnectTimer = null
     }
+
+    // Close WebSocket with explicit code to prevent auto-reconnect
+    if (this.ws) {
+      this.ws.close(1000, 'Manual disconnect')
+      this.ws = null
+    }
+
     if (clearSession) {
       this.currentSessionId = null
+      this.reconnectAttempts = 0
     }
     this.pendingMessages = []
   }
@@ -131,6 +223,7 @@ class WsManager {
     }
     // Queue message if not connected
     this.pendingMessages.push(msg)
+    console.log('[WsManager] Message queued, ws state:', this.ws?.readyState)
     return false
   }
 
@@ -146,6 +239,10 @@ class WsManager {
     return this.ws?.readyState === WebSocket.OPEN
   }
 
+  get connecting() {
+    return this._isConnecting
+  }
+
   get sessionId() {
     return this.currentSessionId
   }
@@ -154,6 +251,7 @@ class WsManager {
 const wsManager = new WsManager()
 
 export default function Chat() {
+  const navigate = useNavigate()
   const {
     messages,
     agents,
@@ -180,6 +278,15 @@ export default function Chat() {
   const [editingSessionId, setEditingSessionId] = useState<string | null>(null)
   const [editingTitle, setEditingTitle] = useState('')
   const [isLoadingSessions, setIsLoadingSessions] = useState(true)
+  const [connectionStatus, setConnectionStatus] = useState<'connected' | 'connecting' | 'disconnected'>('disconnected')
+  // Slash command completion state
+  const [showSlashCommands, setShowSlashCommands] = useState(false)
+  const [slashCommandFilter, setSlashCommandFilter] = useState('')
+  const [selectedCommandIndex, setSelectedCommandIndex] = useState(0)
+  const slashCommandRef = useRef<HTMLDivElement>(null)
+  const [relevantMemories, setRelevantMemories] = useState<Array<{ id: string; name: string; type: string; content: string; relevance: number }>>([])
+  const [showMemories, setShowMemories] = useState(false)
+  const [extractedMemory, setExtractedMemory] = useState<Memory | null>(null)
   const streamingMsgIdRef = useRef<string | null>(null)
   const messagesEndRef = useRef<HTMLDivElement>(null)
 
@@ -197,6 +304,31 @@ export default function Chat() {
     // Load agents from API
     const { loadAgents } = useChatStore.getState()
     loadAgents()
+
+    // Restore WebSocket connection if there's a currentSessionId (page refresh case)
+    const { currentSessionId: savedSessionId } = useChatStore.getState()
+    if (savedSessionId && !wsManager.isOpen) {
+      console.log('[Chat] Restoring connection after page refresh, session:', savedSessionId)
+      // Small delay to let the store fully hydrate
+      setTimeout(() => {
+        wsManager.connect(savedSessionId)
+        loadSessionMessages(savedSessionId)
+      }, 100)
+    }
+
+    // Handle page visibility change (tab switch back)
+    const handleVisibilityChange = () => {
+      if (document.visibilityState === 'visible') {
+        const { currentSessionId: currentId } = useChatStore.getState()
+        if (currentId && !wsManager.isOpen) {
+          console.log('[Chat] Reconnecting after tab visibility change')
+          wsManager.connect(currentId)
+        }
+      }
+    }
+
+    document.addEventListener('visibilitychange', handleVisibilityChange)
+    return () => document.removeEventListener('visibilitychange', handleVisibilityChange)
   }, [])
 
   // Connect WebSocket and load messages when session changes
@@ -211,6 +343,30 @@ export default function Chat() {
     }
   }, [currentSessionId])
 
+  // Fetch relevant memories when input changes
+  const fetchRelevantMemories = useCallback(async (query: string) => {
+    if (!query.trim() || query.length < 10) {
+      setRelevantMemories([])
+      return
+    }
+    try {
+      const memories = await getRelevantMemories(query, 3)
+      setRelevantMemories(memories)
+    } catch (error) {
+      console.error('Failed to fetch relevant memories:', error)
+    }
+  }, [])
+
+  // Debounced memory fetch
+  useEffect(() => {
+    const timer = setTimeout(() => {
+      if (input.trim().length >= 10) {
+        fetchRelevantMemories(input)
+      }
+    }, 500)
+    return () => clearTimeout(timer)
+  }, [input, fetchRelevantMemories])
+
   // Setup WebSocket listeners
   useEffect(() => {
     const unsubscribe = wsManager.subscribe((data) => {
@@ -219,6 +375,7 @@ export default function Chat() {
       switch (data.type) {
         case 'connected':
           console.log('[Chat] Connected to server')
+          setConnectionStatus('connected')
           if (data.sessionId) {
             store.setCurrentSessionId(data.sessionId)
           }
@@ -291,6 +448,7 @@ export default function Chat() {
           streamingMsgIdRef.current = null
           // Refresh sessions to update timestamp
           loadSessions()
+          // Note: Memory extraction is now handled server-side
           break
         }
         case 'title_updated': {
@@ -303,6 +461,25 @@ export default function Chat() {
           break
         }
 
+        case 'memory_extracted': {
+          // Show extracted memory notification
+          if (data.memory) {
+            setExtractedMemory({
+              id: 'temp-' + Date.now(),
+              name: data.memory.name,
+              description: data.memory.description,
+              type: data.memory.type as any,
+              content: data.memory.content,
+              tags: data.memory.tags,
+              createdAt: new Date().toISOString(),
+              updatedAt: new Date().toISOString(),
+            })
+            // Clear after 5 seconds
+            setTimeout(() => setExtractedMemory(null), 5000)
+          }
+          break
+        }
+
         case 'error': {
           store.addMessage({
             content: `⚠️ ${data.message}`,
@@ -310,6 +487,12 @@ export default function Chat() {
           })
           store.setTyping(false)
           streamingMsgIdRef.current = null
+          setConnectionStatus('disconnected')
+          break
+        }
+
+        case 'pong': {
+          // Connection is alive, do nothing
           break
         }
       }
@@ -323,17 +506,12 @@ export default function Chat() {
   // Load all sessions
   const loadSessions = async () => {
     try {
-      const res = await fetch('/api/chat/sessions')
-      const data = await res.json()
-      if (data.sessions) {
-        // Always use server data, replacing local cache
-        setSessions(data.sessions)
-      } else {
-        // Server returned no sessions, clear local state
-        setSessions([])
-      }
+      const sessions = await getChatSessions()
+      // Always use server data, replacing local cache
+      setSessions(sessions)
     } catch (err) {
       console.error('Failed to load sessions:', err)
+      setSessions([])
     } finally {
       setIsLoadingSessions(false)
     }
@@ -341,29 +519,32 @@ export default function Chat() {
 
   // Load messages for a specific session
   const loadSessionMessages = async (sessionId: string) => {
-    console.log('[Chat] Loading messages for session:', sessionId)
     try {
       const res = await fetch(`/api/chat/history/${sessionId}`)
       const data = await res.json()
-      console.log('[Chat] Loaded messages:', data.messages?.length || 0)
 
       // Always clear messages first to avoid duplicates
       clearMessages()
 
       if (data.messages && Array.isArray(data.messages) && data.messages.length > 0) {
-        // Use setTimeout to ensure clearMessages completes before adding new ones
-        setTimeout(() => {
-          for (const msg of data.messages) {
-            addMessage({
-              id: msg.id || Math.random().toString(36).substring(2, 15),
-              content: msg.content,
-              role: msg.role,
-              agentId: msg.agentId,
-              agentName: msg.agentName,
-              agentAvatar: msg.agentAvatar,
-            })
-          }
-        }, 0)
+        // Deduplicate messages by id
+        const seenIds = new Set<string>()
+        const uniqueMessages = data.messages.filter((msg: any) => {
+          if (!msg.id || seenIds.has(msg.id)) return false
+          seenIds.add(msg.id)
+          return true
+        })
+        // Add messages in batch
+        for (const msg of uniqueMessages) {
+          addMessage({
+            id: msg.id,
+            content: msg.content,
+            role: msg.role,
+            agentId: msg.agentId,
+            agentName: msg.agentName,
+            agentAvatar: msg.agentAvatar,
+          })
+        }
       }
     } catch (err) {
       console.error('Failed to load session messages:', err)
@@ -394,31 +575,29 @@ export default function Chat() {
   const createNewSession = async () => {
     try {
       const currentAgent = useChatStore.getState().currentAgent
-      const res = await fetch('/api/chat/sessions', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          title: `新对话 ${new Date().toLocaleString('zh-CN', { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' })}`,
-          agentId: currentAgent?.id,
-          agentName: currentAgent?.name,
-          agentAvatar: currentAgent?.avatar,
-        }),
+      const session = await createChatSession({
+        title: `新对话 ${new Date().toLocaleString('zh-CN', { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' })}`,
+        agentId: currentAgent?.id,
+        agentName: currentAgent?.name,
+        agentAvatar: currentAgent?.avatar,
       })
-      const data = await res.json()
-      if (data.sessionId) {
-        addSession({
-          id: data.sessionId,
-          title: data.title,
-          updatedAt: new Date().toISOString(),
-          agentId: currentAgent?.id,
-          agentName: currentAgent?.name,
-          agentAvatar: currentAgent?.avatar,
-        })
-        setCurrentSessionId(data.sessionId)
-        clearMessages()
-      }
+      addSession({
+        id: session.id,
+        title: session.title,
+        updatedAt: session.updatedAt,
+        agentId: session.agentId,
+        agentName: session.agentName,
+        agentAvatar: session.agentAvatar,
+      })
+      setCurrentSessionId(session.id)
+      clearMessages()
+
+      // Immediately connect WebSocket for new session
+      console.log('[Chat] Connecting WebSocket for new session:', session.id)
+      wsManager.connect(session.id)
     } catch (err) {
       console.error('Failed to create session:', err)
+      alert('创建会话失败: ' + (err instanceof Error ? err.message : String(err)))
     }
   }
 
@@ -428,7 +607,7 @@ export default function Chat() {
     if (!confirm('确定要删除这个对话吗？')) return
 
     try {
-      await fetch(`/api/chat/sessions/${sessionId}`, { method: 'DELETE' })
+      await deleteChatSession(sessionId)
       removeSession(sessionId)
       if (currentSessionId === sessionId) {
         setCurrentSessionId(null)
@@ -449,11 +628,7 @@ export default function Chat() {
   // Save session title
   const saveSessionTitle = async (sessionId: string) => {
     try {
-      await fetch(`/api/chat/sessions/${sessionId}`, {
-        method: 'PUT',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ title: editingTitle }),
-      })
+      await updateChatSession(sessionId, editingTitle)
       updateSessionTitle(sessionId, editingTitle)
       setEditingSessionId(null)
     } catch (err) {
@@ -481,6 +656,23 @@ export default function Chat() {
     // If no session, create one first
     if (!currentSessionId) {
       await createNewSession()
+      return // createNewSession will trigger re-render, wait for it
+    }
+
+    // Ensure WebSocket is connected before sending
+    if (!wsManager.isOpen) {
+      console.log('[Chat] WebSocket not connected, attempting to reconnect...')
+      setConnectionStatus('connecting')
+      wsManager.connect(currentSessionId)
+
+      // Wait a bit for connection
+      await new Promise(resolve => setTimeout(resolve, 500))
+
+      if (!wsManager.isOpen) {
+        addMessage({ content: '⚠️ 连接服务器失败，请检查网络后重试', role: 'assistant' })
+        setConnectionStatus('disconnected')
+        return
+      }
     }
 
     const trimmed = input.trim()
@@ -535,10 +727,73 @@ export default function Chat() {
     }
   }, [input, currentAgent, addMessage, setTyping, currentSessionId])
 
+  // Handle slash command selection
+  const handleSelectCommand = (command: SlashCommand) => {
+    setInput(command.usage || command.command + ' ')
+    setShowSlashCommands(false)
+    setSlashCommandFilter('')
+  }
+
+  // Filter commands based on input
+  const filteredCommands = SLASH_COMMANDS.filter(cmd => {
+    if (!slashCommandFilter) return true
+    const filter = slashCommandFilter.toLowerCase()
+    return cmd.command.toLowerCase().includes(filter) ||
+           cmd.description.toLowerCase().includes(filter)
+  })
+
   const handleKeyDown = (e: React.KeyboardEvent) => {
+    // Handle slash command navigation
+    if (showSlashCommands) {
+      switch (e.key) {
+        case 'ArrowDown':
+          e.preventDefault()
+          setSelectedCommandIndex(prev =>
+            prev < filteredCommands.length - 1 ? prev + 1 : prev
+          )
+          return
+        case 'ArrowUp':
+          e.preventDefault()
+          setSelectedCommandIndex(prev => prev > 0 ? prev - 1 : 0)
+          return
+        case 'Tab':
+        case 'Enter':
+          e.preventDefault()
+          if (filteredCommands[selectedCommandIndex]) {
+            handleSelectCommand(filteredCommands[selectedCommandIndex])
+          }
+          return
+        case 'Escape':
+          e.preventDefault()
+          setShowSlashCommands(false)
+          return
+      }
+    }
+
     if (e.key === 'Enter' && !e.shiftKey) {
       e.preventDefault()
       handleSend()
+    }
+  }
+
+  // Handle input change for slash commands
+  const handleInputChange = (e: React.ChangeEvent<HTMLTextAreaElement>) => {
+    const value = e.target.value
+    setInput(value)
+
+    // Check for slash command
+    if (value.startsWith('/')) {
+      const match = value.match(/^\/([a-zA-Z]*)$/)
+      if (match) {
+        setShowSlashCommands(true)
+        setSlashCommandFilter(match[1])
+        setSelectedCommandIndex(0)
+      } else if (value.includes(' ')) {
+        // Hide commands once user starts typing arguments
+        setShowSlashCommands(false)
+      }
+    } else {
+      setShowSlashCommands(false)
     }
   }
 
@@ -678,10 +933,27 @@ export default function Chat() {
               </p>
             </div>
           </div>
-          <button className="flex items-center gap-2 px-3 py-1.5 text-sm text-gray-600 hover:bg-gray-100 rounded-lg transition-colors">
-            <Settings className="w-4 h-4" />
-            配置
-          </button>
+          <div className="flex items-center gap-3">
+            {/* Connection Status */}
+            {connectionStatus !== 'connected' && currentSessionId && (
+              <div className={cn(
+                "flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-medium",
+                connectionStatus === 'connecting'
+                  ? 'bg-yellow-100 text-yellow-700'
+                  : 'bg-red-100 text-red-700'
+              )}>
+                <span className={cn(
+                  "w-1.5 h-1.5 rounded-full",
+                  connectionStatus === 'connecting' ? 'bg-yellow-500 animate-pulse' : 'bg-red-500'
+                )} />
+                {connectionStatus === 'connecting' ? '连接中...' : '已断开'}
+              </div>
+            )}
+            <button className="flex items-center gap-2 px-3 py-1.5 text-sm text-gray-600 hover:bg-gray-100 rounded-lg transition-colors">
+              <Settings className="w-4 h-4" />
+              配置
+            </button>
+          </div>
         </div>
 
         {/* Messages */}
@@ -774,8 +1046,8 @@ export default function Chat() {
 
         {/* Permission Request Overlay */}
         {permission && (
-          <div className="absolute inset-x-0 bottom-24 mx-auto w-full max-w-2xl px-4">
-            <div className="bg-white border border-orange-200 rounded-xl shadow-lg p-4">
+          <div className="absolute inset-x-0 bottom-24 mx-auto w-full max-w-2xl px-4 z-50">
+            <div className="bg-white border border-orange-200 rounded-xl shadow-xl p-4">
               <div className="flex items-start gap-3">
                 <div className="w-10 h-10 rounded-full bg-orange-100 flex items-center justify-center flex-shrink-0">
                   <ShieldAlert className="w-5 h-5 text-orange-600" />
@@ -810,8 +1082,8 @@ export default function Chat() {
 
         {/* Question Overlay */}
         {question && (
-          <div className="absolute inset-x-0 bottom-24 mx-auto w-full max-w-2xl px-4">
-            <div className="bg-white border border-blue-200 rounded-xl shadow-lg p-4">
+          <div className="absolute inset-x-0 bottom-24 mx-auto w-full max-w-2xl px-4 z-50">
+            <div className="bg-white border border-blue-200 rounded-xl shadow-xl p-4">
               <h4 className="font-semibold text-gray-900">{question.question}</h4>
               <div className="flex flex-wrap gap-2 mt-3">
                 {question.options && question.options.length > 0 ? (
@@ -848,12 +1120,106 @@ export default function Chat() {
           </div>
         )}
 
+        {/* Relevant Memories */}
+        {relevantMemories.length > 0 && (
+          <div className="px-4 py-2 bg-violet-50 border-t border-violet-100">
+            <div className="flex items-center gap-2 mb-2">
+              <Brain className="w-4 h-4 text-violet-600" />
+              <span className="text-xs font-medium text-violet-700">相关记忆</span>
+              <button
+                onClick={() => setShowMemories(!showMemories)}
+                className="text-xs text-violet-600 hover:text-violet-800 underline"
+              >
+                {showMemories ? '收起' : '展开'}
+              </button>
+            </div>
+            {showMemories && (
+              <div className="space-y-2">
+                {relevantMemories.map((memory) => (
+                  <div
+                    key={memory.id}
+                    className="p-2 bg-white rounded-lg border border-violet-200 text-xs"
+                  >
+                    <div className="flex items-center gap-2 mb-1">
+                      <span className="font-medium text-gray-900">{memory.name}</span>
+                      <span className="text-violet-600">({Math.round(memory.relevance * 100)}% 匹配)</span>
+                    </div>
+                    <p className="text-gray-600 line-clamp-2">{memory.content}</p>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+        )}
+
+        {/* Memory Extracted Notification */}
+        {extractedMemory && (
+          <div className="px-4 py-2 bg-green-50 border-t border-green-100">
+            <div className="flex items-center gap-2">
+              <Lightbulb className="w-4 h-4 text-green-600" />
+              <span className="text-xs text-green-700">
+                已自动保存记忆: <strong>{extractedMemory.name}</strong>
+              </span>
+            </div>
+          </div>
+        )}
+
         {/* Input Area */}
         <div className="p-4 border-t border-gray-100">
           <div className="relative">
+            {/* Slash Command Suggestions */}
+            {showSlashCommands && filteredCommands.length > 0 && (
+              <div
+                ref={slashCommandRef}
+                className="absolute bottom-full left-0 right-0 mb-2 bg-white border border-gray-200 rounded-xl shadow-xl max-h-64 overflow-y-auto z-50"
+              >
+                <div className="p-2">
+                  <div className="text-xs text-gray-500 px-3 py-1.5 border-b border-gray-100 mb-1">
+                    可用命令
+                  </div>
+                  {filteredCommands.map((cmd, index) => (
+                    <button
+                      key={cmd.command}
+                      onClick={() => handleSelectCommand(cmd)}
+                      className={cn(
+                        'w-full text-left px-3 py-2 rounded-lg flex items-center gap-3 transition-colors',
+                        index === selectedCommandIndex
+                          ? 'bg-accio-50 border-accio-200'
+                          : 'hover:bg-gray-50'
+                      )}
+                    >
+                      <span className="text-lg">{cmd.icon}</span>
+                      <div className="flex-1 min-w-0">
+                        <div className="flex items-center gap-2">
+                          <span className="font-mono text-sm font-medium text-accio-700">
+                            {cmd.command}
+                          </span>
+                          <span className="text-xs text-gray-500">
+                            {cmd.description}
+                          </span>
+                        </div>
+                        {cmd.usage && (
+                          <div className="text-xs text-gray-400 mt-0.5 font-mono">
+                            {cmd.usage}
+                          </div>
+                        )}
+                      </div>
+                      {index === selectedCommandIndex && (
+                        <span className="text-xs text-accio-500">↵</span>
+                      )}
+                    </button>
+                  ))}
+                </div>
+                <div className="px-3 py-1.5 bg-gray-50 border-t border-gray-100 text-xs text-gray-400 flex items-center justify-between">
+                  <span>↑↓ 选择</span>
+                  <span>Tab/Enter 确认</span>
+                  <span>Esc 关闭</span>
+                </div>
+              </div>
+            )}
             <textarea
               value={input}
-              onChange={(e) => setInput(e.target.value)}
+              onChange={handleInputChange}
               onKeyDown={handleKeyDown}
               placeholder={currentSessionId ? "描述您的需求，AI团队将协同处理..." : "点击左侧「新建对话」开始聊天"}
               disabled={!currentSessionId}
@@ -940,7 +1306,10 @@ export default function Chat() {
           })}
         </div>
         <div className="p-4 border-t border-gray-100">
-          <button className="w-full py-2 border border-dashed border-gray-300 rounded-lg text-sm text-gray-500 hover:border-accio-400 hover:text-accio-600 transition-colors flex items-center justify-center gap-2">
+          <button
+            onClick={() => navigate('/agents')}
+            className="w-full py-2 border border-dashed border-gray-300 rounded-lg text-sm text-gray-500 hover:border-accio-400 hover:text-accio-600 transition-colors flex items-center justify-center gap-2"
+          >
             <Plus className="w-4 h-4" />
             创建自定义智能体
           </button>

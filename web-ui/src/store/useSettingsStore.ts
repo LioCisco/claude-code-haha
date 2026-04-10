@@ -22,6 +22,7 @@ interface SettingsState {
   toggleIntegration: (platform: string, isConnected: boolean) => Promise<void>
   fetchTeamMembers: () => Promise<void>
   addTeamMember: (member: Omit<TeamMember, 'id' | 'status' | 'invitedAt' | 'joinedAt'>) => Promise<void>
+  uploadAvatar: (file: File) => Promise<string>
   updateTeamMember: (id: string, updates: Partial<TeamMember>) => Promise<void>
   removeTeamMember: (id: string) => Promise<void>
   clearError: () => void
@@ -119,6 +120,20 @@ export const useSettingsStore = create<SettingsState>()((set, get) => ({
       set({ teamMembers: members, isLoading: false })
     } catch (err) {
       set({ error: (err as Error).message, isLoading: false })
+    }
+  },
+
+  uploadAvatar: async (file) => {
+    set({ isLoading: true, error: null })
+    try {
+      const { avatarUrl } = await settingsApi.uploadAvatar(file)
+      // Refresh settings to get updated avatar URL
+      const settings = await settingsApi.getSettings()
+      set({ settings, isLoading: false })
+      return avatarUrl
+    } catch (err) {
+      set({ error: (err as Error).message, isLoading: false })
+      throw err
     }
   },
 

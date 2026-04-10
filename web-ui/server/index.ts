@@ -15,6 +15,10 @@ import { claudeCodeSkillsRoutes } from './routes/claudeCodeSkills'
 import { settingsRoutes } from './routes/settings'
 import { workflowRoutes } from './routes/workflows'
 import { inventoryRoutes } from './routes/inventory'
+import { memoryRoutes } from './routes/memories'
+import { pluginRoutes } from './routes/plugins'
+import { marketplaceRoutes } from './routes/marketplace'
+import { initializePluginEngine, loadActivePlugins } from './lib/pluginEngine'
 import { chatWithAI, getAgentSystemPrompt } from './lib/ai'
 import { ClaudeSession, type ChatEvent } from './lib/claudeSession'
 import { initDatabase, getSessionMessages, createSession, checkDatabaseHealth, getUserSessions, updateSessionTitle, softDeleteSession } from './db'
@@ -29,6 +33,14 @@ const DB_ENABLED = true
 try {
   await initDatabase()
   console.log('[Server] Database initialized successfully')
+
+  // Seed database with sample data
+  const { seedDatabase } = await import('./db/seed')
+  await seedDatabase()
+
+  // Initialize plugin engine after database
+  await initializePluginEngine()
+  console.log('[Server] Plugin engine initialized successfully')
 } catch (err) {
   console.error('[Server] Database initialization failed:', err)
   console.log('[Server] Running without database persistence')
@@ -40,6 +52,11 @@ const app = new Elysia()
   .use(staticPlugin({
     prefix: '/',
     assets: '../dist'
+  }))
+  // Serve uploaded avatars
+  .use(staticPlugin({
+    prefix: '/upload',
+    assets: '../../upload'
   }))
 
   // Health check with database status
@@ -65,8 +82,30 @@ const app = new Elysia()
     }
   })
 
+  // API Routes
+  .use(authRoutes)
+
+  // Auth middleware for protected routes
+  .use(authMiddleware)
+
+  // Chat Session Routes - inline auth check
   // Get all chat sessions
-  .get('/api/chat/sessions', async ({ query, request }) => {
+  .get('/api/chat/sessions', async ({ query, request, set }) => {
+    // Inline auth check
+    const authHeader = request.headers.get('authorization')
+    if (!authHeader?.startsWith('Bearer ')) {
+      set.status = 401
+      return { error: 'Unauthorized' }
+    }
+    const token = authHeader.substring(7)
+    try {
+      const { verifyToken } = await import('./lib/jwt')
+      const payload = verifyToken(token)
+      ;(request as any).user = { id: payload.userId }
+    } catch {
+      set.status = 401
+      return { error: 'Unauthorized' }
+    }
     if (!DB_ENABLED) {
       return { sessions: [] }
     }
@@ -86,14 +125,29 @@ const app = new Elysia()
   })
 
   // Create new chat session
-  .post('/api/chat/sessions', async ({ body, request }) => {
+  .post('/api/chat/sessions', async ({ body, request, set }) => {
+    // Inline auth check
+    const authHeader = request.headers.get('authorization')
+    if (!authHeader?.startsWith('Bearer ')) {
+      set.status = 401
+      return { error: 'Unauthorized' }
+    }
+    const token = authHeader.substring(7)
+    let userId: string
+    try {
+      const { verifyToken } = await import('./lib/jwt')
+      const payload = verifyToken(token)
+      userId = payload.userId
+    } catch {
+      set.status = 401
+      return { error: 'Unauthorized' }
+    }
     if (!DB_ENABLED) {
+      set.status = 500
       return { error: 'Database not enabled' }
     }
     try {
       const { title, agentId, agentName, agentAvatar } = body as any
-      // 从 authMiddleware 获取用户ID
-      const userId = (request as any).user?.id || 'default-user'
       const sessionId = crypto.randomUUID()
       await createSession(sessionId, {
         userId,
@@ -110,7 +164,21 @@ const app = new Elysia()
   })
 
   // Update session title
-  .put('/api/chat/sessions/:sessionId', async ({ params, body }) => {
+  .put('/api/chat/sessions/:sessionId', async ({ params, body, request, set }) => {
+    // Inline auth check
+    const authHeader = request.headers.get('authorization')
+    if (!authHeader?.startsWith('Bearer ')) {
+      set.status = 401
+      return { error: 'Unauthorized' }
+    }
+    const token = authHeader.substring(7)
+    try {
+      const { verifyToken } = await import('./lib/jwt')
+      verifyToken(token)
+    } catch {
+      set.status = 401
+      return { error: 'Unauthorized' }
+    }
     if (!DB_ENABLED) {
       return { error: 'Database not enabled' }
     }
@@ -124,7 +192,21 @@ const app = new Elysia()
   })
 
   // Delete session
-  .delete('/api/chat/sessions/:sessionId', async ({ params }) => {
+  .delete('/api/chat/sessions/:sessionId', async ({ params, request, set }) => {
+    // Inline auth check
+    const authHeader = request.headers.get('authorization')
+    if (!authHeader?.startsWith('Bearer ')) {
+      set.status = 401
+      return { error: 'Unauthorized' }
+    }
+    const token = authHeader.substring(7)
+    try {
+      const { verifyToken } = await import('./lib/jwt')
+      verifyToken(token)
+    } catch {
+      set.status = 401
+      return { error: 'Unauthorized' }
+    }
     if (!DB_ENABLED) {
       return { error: 'Database not enabled' }
     }
@@ -135,12 +217,6 @@ const app = new Elysia()
       return { error: 'Failed to delete session' }
     }
   })
-
-  // Auth middleware (applied to all routes below)
-  .use(authMiddleware)
-
-  // API Routes
-  .use(authRoutes)
   .use(chatRoutes)
   .use(agentRoutes)
   .use(skillRoutes)
@@ -151,6 +227,9 @@ const app = new Elysia()
   .use(settingsRoutes)
   .use(workflowRoutes)
   .use(inventoryRoutes)
+  .use(memoryRoutes)
+  .use(pluginRoutes)
+  .use(marketplaceRoutes)
 
   // WebSocket for real-time chat with full Claude Code capabilities
   .ws('/ws/chat', {
@@ -167,15 +246,30 @@ const app = new Elysia()
         : ws.id
       console.log('[WebSocket] Using sessionId:', sessionId, '(from query:', !!querySessionId, ')')
 
+      // Get userId from token in query params
+      let userId: string | undefined
+      const token = ws.data.query?.token as string | undefined
+      if (token) {
+        try {
+          const { verifyToken } = await import('./lib/jwt')
+          const payload = verifyToken(token)
+          userId = payload.userId
+          console.log('[WebSocket] Authenticated user:', userId)
+        } catch (err) {
+          console.warn('[WebSocket] Invalid token, using anonymous session')
+        }
+      }
+
       // Create session in database if not exists
       if (DB_ENABLED) {
         try {
           const existingSession = await getSessionMessages(sessionId, 1)
           if (existingSession.length === 0) {
             await createSession(sessionId, {
+              userId,
               title: `会话 ${new Date().toLocaleString('zh-CN')}`,
             })
-            console.log(`[WebSocket] Created new session in DB: ${sessionId}`)
+            console.log(`[WebSocket] Created new session in DB: ${sessionId} for user: ${userId || 'anonymous'}`)
           } else {
             console.log(`[WebSocket] Existing session found: ${sessionId}`)
           }
@@ -184,13 +278,14 @@ const app = new Elysia()
         }
       }
 
-      // Create ClaudeSession with database support
+      // Create ClaudeSession with database support and user context
       const session = new ClaudeSession({
         apiKey: apiKey || '',
         baseURL,
         model,
         sessionId,
         dbEnabled: DB_ENABLED,
+        userId: userId,
         async onEvent(event: ChatEvent) {
           ws.send(JSON.stringify(event))
         },
@@ -283,6 +378,12 @@ const app = new Elysia()
             ws.send(JSON.stringify({ type: 'error', message: 'Failed to load history' }))
           }
         }
+        return
+      }
+
+      // Handle ping to keep connection alive
+      if (data.type === 'ping') {
+        ws.send(JSON.stringify({ type: 'pong' }))
         return
       }
 

@@ -145,3 +145,19 @@ export async function useTokens(tokens: number): Promise<void> {
     throw new Error(data.message || 'Failed to update token usage')
   }
 }
+
+// Upload avatar
+export async function uploadAvatar(file: File): Promise<{ avatarUrl: string }> {
+  const formData = new FormData()
+  formData.append('avatar', file)
+
+  const res = await fetch('/api/settings/avatar', {
+    method: 'POST',
+    body: formData,
+  })
+  const data = await res.json()
+  if (!data.success) {
+    throw new Error(data.message || 'Failed to upload avatar')
+  }
+  return { avatarUrl: data.avatarUrl }
+}

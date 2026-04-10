@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useRef } from 'react'
 import {
   User,
   Bell,
@@ -93,13 +93,16 @@ export default function Settings() {
 }
 
 function AccountSettings() {
-  const { settings, updateSettings, isLoading } = useSettingsStore()
+  const { settings, updateSettings, uploadAvatar, isLoading } = useSettingsStore()
   const [formData, setFormData] = useState({
     displayName: '',
     email: '',
     phone: '',
     region: '中国大陆',
   })
+  const [avatarPreview, setAvatarPreview] = useState<string | null>(null)
+  const [isUploading, setIsUploading] = useState(false)
+  const fileInputRef = useRef<HTMLInputElement>(null)
 
   useEffect(() => {
     if (settings) {
@@ -116,6 +119,51 @@ function AccountSettings() {
     await updateSettings(formData)
   }
 
+  const handleAvatarClick = () => {
+    fileInputRef.current?.click()
+  }
+
+  const handleFileChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0]
+    if (!file) return
+
+    // Validate file
+    const allowedTypes = ['image/jpeg', 'image/png', 'image/gif', 'image/webp']
+    if (!allowedTypes.includes(file.type)) {
+      alert('请上传 JPG、PNG、GIF 或 WEBP 格式的图片')
+      return
+    }
+
+    if (file.size > 2 * 1024 * 1024) {
+      alert('图片大小不能超过 2MB')
+      return
+    }
+
+    // Show preview
+    const reader = new FileReader()
+    reader.onload = (event) => {
+      setAvatarPreview(event.target?.result as string)
+    }
+    reader.readAsDataURL(file)
+
+    // Upload
+    setIsUploading(true)
+    try {
+      await uploadAvatar(file)
+      setAvatarPreview(null) // Clear preview after successful upload
+      alert('头像上传成功！')
+    } catch (error) {
+      alert('头像上传失败：' + (error as Error).message)
+      setAvatarPreview(null)
+    } finally {
+      setIsUploading(false)
+    }
+  }
+
+  // Get avatar URL
+  const avatarUrl = avatarPreview || settings?.avatarUrl
+  const displayName = formData.displayName || '用户'
+
   return (
     <div className="space-y-6">
       <div>
@@ -123,58 +171,125 @@ function AccountSettings() {
         <p className="text-sm text-gray-500">管理您的个人资料信息</p>
       </div>
 
-      <div className="flex items-center gap-4 pb-6 border-b border-gray-100">
-        <div className="w-20 h-20 bg-gradient-to-br from-accio-400 to-accio-600 rounded-full flex items-center justify-center text-white text-2xl font-bold">
-          {formData.displayName?.[0] || '商'}
+      {/* Avatar Section */}
+      <div className="flex items-center gap-6 pb-6 border-b border-gray-100">
+        <div className="relative">
+          {avatarUrl ? (
+            <img
+              src={avatarUrl.startsWith('http') ? avatarUrl : `http://localhost:8080${avatarUrl}`}
+              alt="Avatar"
+              className="w-24 h-24 rounded-full object-cover border-4 border-white shadow-lg"
+            />
+          ) : (
+            <div className="w-24 h-24 bg-gradient-to-br from-accio-400 to-accio-600 rounded-full flex items-center justify-center text-white text-3xl font-bold shadow-lg">
+              {displayName[0]}
+            </div>
+          )}
+          {isUploading && (
+            <div className="absolute inset-0 flex items-center justify-center bg-black/50 rounded-full">
+              <Loader2 className="w-8 h-8 text-white animate-spin" />
+            </div>
+          )}
         </div>
         <div>
-          <button className="px-4 py-2 bg-gray-100 hover:bg-gray-200 text-gray-700 text-sm rounded-lg transition-colors">
-            更换头像
+          <input
+            type="file"
+            ref={fileInputRef}
+            onChange={handleFileChange}
+            accept="image/jpeg,image/png,image/gif,image/webp"
+            className="hidden"
+          />
+          <button
+            onClick={handleAvatarClick}
+            disabled={isUploading}
+            className="px-4 py-2 bg-accio-600 hover:bg-accio-700 disabled:opacity-50 text-white text-sm rounded-lg transition-colors flex items-center gap-2"
+          >
+            <User className="w-4 h-4" />
+            {avatarUrl ? '更换头像' : '上传头像'}
           </button>
-          <p className="text-xs text-gray-400 mt-2">支持 JPG、PNG 格式，最大 2MB</p>
+          <p className="text-xs text-gray-400 mt-2">支持 JPG、PNG、GIF、WEBP 格式，最大 2MB</p>
         </div>
       </div>
 
-      <div className="grid grid-cols-2 gap-4">
-        <div>
-          <label className="block text-sm font-medium text-gray-700 mb-1">显示名称</label>
-          <input
-            type="text"
-            value={formData.displayName}
-            onChange={(e) => setFormData({ ...formData, displayName: e.target.value })}
-            className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-accio-500"
-          />
+      {/* User Info Display */}
+      <div className="bg-gray-50 rounded-xl p-4 space-y-3">
+        <h3 className="text-sm font-medium text-gray-900 mb-3">基本信息</h3>
+        <div className="grid grid-cols-2 gap-4">
+          <div>
+            <label className="block text-xs text-gray-500 mb-1">用户ID</label>
+            <div className="text-sm font-mono text-gray-700 bg-white px-3 py-2 rounded-lg border border-gray-200">
+              {settings?.userId || '-'}
+            </div>
+          </div>
+          <div>
+            <label className="block text-xs text-gray-500 mb-1">用户名</label>
+            <div className="text-sm text-gray-700 bg-white px-3 py-2 rounded-lg border border-gray-200">
+              {settings?.displayName || '未设置'}
+            </div>
+          </div>
         </div>
-        <div>
-          <label className="block text-sm font-medium text-gray-700 mb-1">邮箱地址</label>
-          <input
-            type="email"
-            value={formData.email}
-            onChange={(e) => setFormData({ ...formData, email: e.target.value })}
-            className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-accio-500"
-          />
-        </div>
-        <div>
-          <label className="block text-sm font-medium text-gray-700 mb-1">手机号</label>
-          <input
-            type="tel"
-            value={formData.phone}
-            onChange={(e) => setFormData({ ...formData, phone: e.target.value })}
-            className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-accio-500"
-          />
-        </div>
-        <div>
-          <label className="block text-sm font-medium text-gray-700 mb-1">所在地区</label>
-          <select
-            value={formData.region}
-            onChange={(e) => setFormData({ ...formData, region: e.target.value })}
-            className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-accio-500"
-          >
-            <option>中国大陆</option>
-            <option>中国香港</option>
-            <option>美国</option>
-            <option>新加坡</option>
-          </select>
+      </div>
+
+      {/* Editable Fields */}
+      <div className="space-y-4">
+        <h3 className="text-sm font-medium text-gray-900">编辑资料</h3>
+        <div className="grid grid-cols-2 gap-4">
+          <div>
+            <label className="block text-sm font-medium text-gray-700 mb-1">
+              显示名称 <span className="text-red-500">*</span>
+            </label>
+            <input
+              type="text"
+              value={formData.displayName}
+              onChange={(e) => setFormData({ ...formData, displayName: e.target.value })}
+              placeholder="请输入显示名称"
+              className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-accio-500 focus:border-transparent"
+            />
+          </div>
+          <div>
+            <label className="block text-sm font-medium text-gray-700 mb-1">
+              邮箱地址 <span className="text-red-500">*</span>
+            </label>
+            <input
+              type="email"
+              value={formData.email}
+              onChange={(e) => setFormData({ ...formData, email: e.target.value })}
+              placeholder="请输入邮箱地址"
+              className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-accio-500 focus:border-transparent"
+            />
+          </div>
+          <div>
+            <label className="block text-sm font-medium text-gray-700 mb-1">手机号</label>
+            <input
+              type="tel"
+              value={formData.phone}
+              onChange={(e) => setFormData({ ...formData, phone: e.target.value })}
+              placeholder="请输入手机号"
+              className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-accio-500 focus:border-transparent"
+            />
+          </div>
+          <div>
+            <label className="block text-sm font-medium text-gray-700 mb-1">所在地区</label>
+            <select
+              value={formData.region}
+              onChange={(e) => setFormData({ ...formData, region: e.target.value })}
+              className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-accio-500 focus:border-transparent"
+            >
+              <option>中国大陆</option>
+              <option>中国香港</option>
+              <option>中国台湾</option>
+              <option>美国</option>
+              <option>新加坡</option>
+              <option>日本</option>
+              <option>韩国</option>
+              <option>英国</option>
+              <option>德国</option>
+              <option>法国</option>
+              <option>澳大利亚</option>
+              <option>加拿大</option>
+              <option>其他</option>
+            </select>
+          </div>
         </div>
       </div>
 

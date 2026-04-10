@@ -1,4 +1,6 @@
 import { Elysia, t } from 'elysia'
+import * as fs from 'fs/promises'
+import * as path from 'path'
 import {
   getUserSettings,
   updateUserSettings,
@@ -10,6 +12,19 @@ import {
   deleteTeamMember,
   updateTokenUsage,
 } from '../db'
+
+// Ensure upload directory exists
+const UPLOAD_DIR = path.join(process.cwd(), '..', '..', 'upload', 'avatar')
+async function ensureUploadDir() {
+  try {
+    await fs.mkdir(UPLOAD_DIR, { recursive: true })
+  } catch {
+    // Directory may already exist
+  }
+}
+
+// Initialize upload directory
+ensureUploadDir()
 
 export const settingsRoutes = new Elysia({ prefix: '/api/settings' })
   // Get user settings
@@ -281,4 +296,54 @@ export const settingsRoutes = new Elysia({ prefix: '/api/settings' })
     body: t.Object({
       tokens: t.Number(),
     }),
+  })
+
+  // Upload avatar
+  .post('/avatar', async ({ request, query }) => {
+    const userId = (query.userId as string) || 'default-user'
+
+    try {
+      const formData = await request.formData()
+      const file = formData.get('avatar') as File
+
+      if (!file) {
+        return { success: false, message: 'No file uploaded' }
+      }
+
+      // Validate file type
+      const allowedTypes = ['image/jpeg', 'image/png', 'image/gif', 'image/webp']
+      if (!allowedTypes.includes(file.type)) {
+        return { success: false, message: 'Invalid file type. Only JPG, PNG, GIF, WEBP allowed' }
+      }
+
+      // Validate file size (max 2MB)
+      const maxSize = 2 * 1024 * 1024
+      if (file.size > maxSize) {
+        return { success: false, message: 'File too large. Max 2MB allowed' }
+      }
+
+      // Generate unique filename
+      const ext = file.name.split('.').pop() || 'png'
+      const filename = `${userId}_${Date.now()}.${ext}`
+      const filepath = path.join(UPLOAD_DIR, filename)
+
+      // Save file
+      const arrayBuffer = await file.arrayBuffer()
+      await fs.writeFile(filepath, Buffer.from(arrayBuffer))
+
+      // Generate URL (relative to server root)
+      const avatarUrl = `/upload/avatar/${filename}`
+
+      // Update user settings with new avatar URL
+      await updateUserSettings(userId, { avatar_url: avatarUrl })
+
+      return {
+        success: true,
+        avatarUrl,
+        message: 'Avatar uploaded successfully',
+      }
+    } catch (error) {
+      console.error('Avatar upload error:', error)
+      return { success: false, message: 'Failed to upload avatar' }
+    }
   })
