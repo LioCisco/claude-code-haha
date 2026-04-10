@@ -17,12 +17,17 @@ import {
   Check,
   Brain,
   Lightbulb,
+  Puzzle,
+  Zap,
+  ChevronDown,
+  ChevronUp,
 } from 'lucide-react'
 import { useChatStore } from '@/store/useChatStore'
 import { cn, formatTime } from '@/lib/utils'
 import { getChatSessions, createChatSession, updateChatSession, deleteChatSession } from '@/api/chat'
 import { getRelevantMemories } from '@/api/memories'
 import type { Memory } from '@/api/memories'
+import { pluginApi, type Plugin, type PluginTool } from '@/api/plugins'
 import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
 
@@ -284,9 +289,15 @@ export default function Chat() {
   const [slashCommandFilter, setSlashCommandFilter] = useState('')
   const [selectedCommandIndex, setSelectedCommandIndex] = useState(0)
   const slashCommandRef = useRef<HTMLDivElement>(null)
+  const pluginPanelRef = useRef<HTMLDivElement>(null)
   const [relevantMemories, setRelevantMemories] = useState<Array<{ id: string; name: string; type: string; content: string; relevance: number }>>([])
   const [showMemories, setShowMemories] = useState(false)
   const [extractedMemory, setExtractedMemory] = useState<Memory | null>(null)
+  // Plugin state
+  const [plugins, setPlugins] = useState<Plugin[]>([])
+  const [activePlugins, setActivePlugins] = useState<Set<string>>(new Set())
+  const [showPluginPanel, setShowPluginPanel] = useState(false)
+  const [isLoadingPlugins, setIsLoadingPlugins] = useState(false)
   const streamingMsgIdRef = useRef<string | null>(null)
   const messagesEndRef = useRef<HTMLDivElement>(null)
 
@@ -298,9 +309,10 @@ export default function Chat() {
     scrollToBottom()
   }, [messages])
 
-  // Load all sessions and agents on mount
+  // Load all sessions, agents, and plugins on mount
   useEffect(() => {
     loadSessions()
+    loadPlugins()
     // Load agents from API
     const { loadAgents } = useChatStore.getState()
     loadAgents()
@@ -333,12 +345,14 @@ export default function Chat() {
 
   // Connect WebSocket and load messages when session changes
   useEffect(() => {
-    if (currentSessionId) {
-      // Disconnect any existing connection first
+    if (currentSessionId && wsManager.sessionId !== currentSessionId) {
+      // Only disconnect if we're actually switching to a different session
       wsManager.disconnect(false) // false = keep session tracking for reconnect
       // Connect with the new session ID
       wsManager.connect(currentSessionId)
-      // Load messages via REST API (more reliable than WebSocket for history)
+    }
+    // Load messages via REST API (more reliable than WebSocket for history)
+    if (currentSessionId) {
       loadSessionMessages(currentSessionId)
     }
   }, [currentSessionId])
@@ -366,6 +380,19 @@ export default function Chat() {
     }, 500)
     return () => clearTimeout(timer)
   }, [input, fetchRelevantMemories])
+
+  // Close plugin panel when clicking outside
+  useEffect(() => {
+    const handleClickOutside = (event: MouseEvent) => {
+      if (pluginPanelRef.current && !pluginPanelRef.current.contains(event.target as Node)) {
+        setShowPluginPanel(false)
+      }
+    }
+    if (showPluginPanel) {
+      document.addEventListener('mousedown', handleClickOutside)
+    }
+    return () => document.removeEventListener('mousedown', handleClickOutside)
+  }, [showPluginPanel])
 
   // Setup WebSocket listeners
   useEffect(() => {
@@ -517,6 +544,44 @@ export default function Chat() {
     }
   }
 
+  // Load plugins
+  const loadPlugins = async () => {
+    setIsLoadingPlugins(true)
+    try {
+      const response = await pluginApi.getAll()
+      if (response.success) {
+        setPlugins(response.plugins)
+        // Set initially active plugins (enabled ones)
+        const active = new Set<string>(response.plugins.filter(p => p.isEnabled).map(p => p.id))
+        setActivePlugins(active)
+      }
+    } catch (err) {
+      console.error('Failed to load plugins:', err)
+    } finally {
+      setIsLoadingPlugins(false)
+    }
+  }
+
+  // Toggle plugin active state
+  const togglePlugin = async (pluginId: string, enabled: boolean) => {
+    try {
+      const response = await pluginApi.toggle(pluginId, enabled)
+      if (response.success) {
+        setActivePlugins(prev => {
+          const next = new Set(prev)
+          if (enabled) {
+            next.add(pluginId)
+          } else {
+            next.delete(pluginId)
+          }
+          return next
+        })
+      }
+    } catch (err) {
+      console.error('Failed to toggle plugin:', err)
+    }
+  }
+
   // Load messages for a specific session
   const loadSessionMessages = async (sessionId: string) => {
     try {
@@ -592,7 +657,7 @@ export default function Chat() {
       setCurrentSessionId(session.id)
       clearMessages()
 
-      // Immediately connect WebSocket for new session
+      // Connect WebSocket immediately for the new session
       console.log('[Chat] Connecting WebSocket for new session:', session.id)
       wsManager.connect(session.id)
     } catch (err) {
@@ -654,16 +719,28 @@ export default function Chat() {
     if (!input.trim()) return
 
     // If no session, create one first
-    if (!currentSessionId) {
+    let sessionId = currentSessionId
+    if (!sessionId) {
       await createNewSession()
-      return // createNewSession will trigger re-render, wait for it
+      // Get the newly created session ID from store
+      sessionId = useChatStore.getState().currentSessionId
+      if (!sessionId) {
+        addMessage({ content: '⚠️ 创建会话失败，请重试', role: 'assistant' })
+        return
+      }
+      // Wait for WebSocket to connect (give it more time)
+      let attempts = 0
+      while (!wsManager.isOpen && attempts < 20) {
+        await new Promise(resolve => setTimeout(resolve, 100))
+        attempts++
+      }
     }
 
     // Ensure WebSocket is connected before sending
     if (!wsManager.isOpen) {
       console.log('[Chat] WebSocket not connected, attempting to reconnect...')
       setConnectionStatus('connecting')
-      wsManager.connect(currentSessionId)
+      wsManager.connect(sessionId!)
 
       // Wait a bit for connection
       await new Promise(resolve => setTimeout(resolve, 500))
@@ -934,6 +1011,98 @@ export default function Chat() {
             </div>
           </div>
           <div className="flex items-center gap-3">
+            {/* Plugin Selector */}
+            <div className="relative">
+              <button
+                onClick={() => setShowPluginPanel(!showPluginPanel)}
+                className={cn(
+                  "flex items-center gap-2 px-3 py-1.5 text-sm rounded-lg transition-colors",
+                  activePlugins.size > 0
+                    ? "bg-purple-100 text-purple-700 hover:bg-purple-200"
+                    : "bg-gray-100 text-gray-600 hover:bg-gray-200"
+                )}
+              >
+                <Zap className="w-4 h-4" />
+                <span>插件 {activePlugins.size > 0 && `(${activePlugins.size})`}</span>
+                {showPluginPanel ? <ChevronUp className="w-3 h-3" /> : <ChevronDown className="w-3 h-3" />}
+              </button>
+
+              {/* Plugin Panel Dropdown */}
+              {showPluginPanel && (
+                <div ref={pluginPanelRef} className="absolute right-0 top-full mt-2 w-80 bg-white border border-gray-200 rounded-xl shadow-xl z-50 max-h-96 overflow-hidden">
+                  <div className="p-3 border-b border-gray-100">
+                    <h4 className="font-medium text-gray-900 flex items-center gap-2">
+                      <Puzzle className="w-4 h-4 text-purple-600" />
+                      插件管理
+                    </h4>
+                    <p className="text-xs text-gray-500 mt-1">启用插件以增强 AI 能力</p>
+                  </div>
+
+                  <div className="max-h-72 overflow-y-auto">
+                    {isLoadingPlugins ? (
+                      <div className="flex items-center justify-center py-8">
+                        <div className="animate-spin w-5 h-5 border-2 border-purple-600 border-t-transparent rounded-full" />
+                      </div>
+                    ) : plugins.length === 0 ? (
+                      <div className="text-center py-6 text-gray-400 text-sm">
+                        <Puzzle className="w-8 h-8 mx-auto mb-2 opacity-50" />
+                        <p>暂无插件</p>
+                      </div>
+                    ) : (
+                      <div className="p-2 space-y-1">
+                        {plugins.map((plugin) => (
+                          <div
+                            key={plugin.id}
+                            className={cn(
+                              "flex items-center gap-3 p-2 rounded-lg cursor-pointer transition-colors",
+                              activePlugins.has(plugin.id)
+                                ? "bg-purple-50 border border-purple-200"
+                                : "hover:bg-gray-50 border border-transparent"
+                            )}
+                            onClick={() => togglePlugin(plugin.id, !activePlugins.has(plugin.id))}
+                          >
+                            <div className="w-8 h-8 rounded-lg bg-gray-100 flex items-center justify-center text-lg flex-shrink-0">
+                              {plugin.icon === 'Zap' ? '⚡' :
+                               plugin.icon === 'Search' ? '🔍' :
+                               plugin.icon === 'Code' ? '💻' :
+                               plugin.icon === 'GitBranch' ? '🔀' : '🧩'}
+                            </div>
+                            <div className="flex-1 min-w-0">
+                              <div className="flex items-center gap-2">
+                                <span className="font-medium text-sm text-gray-900">{plugin.name}</span>
+                                {plugin.isSystem && (
+                                  <span className="text-xs px-1.5 py-0.5 bg-gray-100 text-gray-500 rounded">系统</span>
+                                )}
+                              </div>
+                              <p className="text-xs text-gray-500 truncate">{plugin.description}</p>
+                            </div>
+                            <div className={cn(
+                              "w-5 h-5 rounded-full border-2 flex items-center justify-center transition-colors",
+                              activePlugins.has(plugin.id)
+                                ? "bg-purple-600 border-purple-600"
+                                : "border-gray-300"
+                            )}>
+                              {activePlugins.has(plugin.id) && <Check className="w-3 h-3 text-white" />}
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+
+                  <div className="p-3 border-t border-gray-100 bg-gray-50">
+                    <button
+                      onClick={() => navigate('/plugins')}
+                      className="w-full py-2 text-sm text-purple-600 hover:text-purple-700 hover:bg-purple-50 rounded-lg transition-colors flex items-center justify-center gap-2"
+                    >
+                      <Plus className="w-4 h-4" />
+                      管理插件
+                    </button>
+                  </div>
+                </div>
+              )}
+            </div>
+
             {/* Connection Status */}
             {connectionStatus !== 'connected' && currentSessionId && (
               <div className={cn(
@@ -1160,6 +1329,33 @@ export default function Chat() {
               <span className="text-xs text-green-700">
                 已自动保存记忆: <strong>{extractedMemory.name}</strong>
               </span>
+            </div>
+          </div>
+        )}
+
+        {/* Active Plugins Bar */}
+        {activePlugins.size > 0 && (
+          <div className="px-4 py-2 border-t border-gray-100 bg-purple-50/50">
+            <div className="flex items-center gap-2 overflow-x-auto">
+              <span className="text-xs text-purple-600 font-medium flex-shrink-0">已启用插件:</span>
+              {Array.from(activePlugins).map(pluginId => {
+                const plugin = plugins.find(p => p.id === pluginId)
+                if (!plugin) return null
+                return (
+                  <span
+                    key={plugin.id}
+                    className="inline-flex items-center gap-1 px-2 py-1 bg-white border border-purple-200 rounded-full text-xs text-purple-700 flex-shrink-0"
+                  >
+                    <span>
+                      {plugin.icon === 'Zap' ? '⚡' :
+                       plugin.icon === 'Search' ? '🔍' :
+                       plugin.icon === 'Code' ? '💻' :
+                       plugin.icon === 'GitBranch' ? '🔀' : '🧩'}
+                    </span>
+                    {plugin.name}
+                  </span>
+                )
+              })}
             </div>
           </div>
         )}

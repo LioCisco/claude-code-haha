@@ -202,6 +202,29 @@ export async function createSession(sessionId: string, options?: {
   ])
 }
 
+// Get session by ID (check if session exists)
+export async function getSession(sessionId: string) {
+  const row = await queryOne<any>(`
+    SELECT * FROM chat_sessions WHERE id = ?
+  `, [sessionId])
+
+  if (!row) return null
+
+  return {
+    id: String(row.id),
+    userId: row.user_id,
+    title: row.title,
+    agentId: row.agent_id,
+    agentName: row.agent_name,
+    agentAvatar: row.agent_avatar,
+    systemPrompt: row.system_prompt,
+    metadata: row.metadata ? JSON.parse(row.metadata) : null,
+    status: row.status,
+    createdAt: row.created_at,
+    updatedAt: row.updated_at
+  }
+}
+
 // Get session messages
 export async function getSessionMessages(sessionId: string, limit: number = 100) {
   const rows = await query<any>(`

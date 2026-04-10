@@ -145,37 +145,41 @@ async function loadBuiltinPlugin(loaded: LoadedPlugin, code: string | null): Pro
 
   try {
     // Create a sandboxed context for the plugin
-    const sandbox = createPluginSandbox(loaded.id, loaded.name)
+    const sandbox = createPluginSandbox(loaded.id, loaded.name) as Record<string, any>
 
-    // Wrap the code in a function
-    const wrappedCode = `
-      (async function() {
-        ${code}
-        // Export all functions starting with the plugin's tool names
-        const manifest = ${JSON.stringify(loaded.manifest)};
-        if (manifest.tools) {
-          manifest.tools.forEach(tool => {
-            if (typeof eval(tool.name) === 'function') {
-              __registerHandler(tool.name, eval(tool.name));
-            }
-          });
-        }
-      })()
-    `
+    // Get tool names from manifest
+    const toolNames = loaded.manifest.tools?.map(t => t.name) || []
 
-    // Execute the code in the sandbox context
-    // Note: In production, use a proper sandbox like vm2 or isolated-vm
-    const context = {
-      ...sandbox,
-      __registerHandler: (name: string, fn: Function) => {
-        loaded.handlers.set(name, fn)
-      }
+    // Transform the code to capture function definitions
+    // The issue: function declarations inside IIFE are not visible outside
+    // Solution: Transform function declarations to assignments on the sandbox object
+    let transformedCode = code
+    for (const toolName of toolNames) {
+      // Replace "async function toolName(...)" with "sandbox.toolName = async function(...)"
+      // Use word boundary to avoid replacing already transformed code
+      const asyncFnRegex = new RegExp(`(^|\\s|\\n|\\r|\\t)(async\\s+function\\s+${toolName}\\s*\\()`, 'g')
+      transformedCode = transformedCode.replace(asyncFnRegex, `$1sandbox.${toolName} = $2`)
     }
 
-    // Simple eval-based execution (for development only)
-    // In production, use a proper sandbox
-    const fn = new Function(...Object.keys(context), wrappedCode)
-    await fn(...Object.values(context))
+    // Wrap code in async function
+    // Use string concatenation to avoid issues with backticks in transformedCode
+    const wrappedCode = '(async function(sandbox) {\n' + transformedCode + '\n})'
+
+    // Execute the code
+    // Note: In production, use a proper sandbox like vm2 or isolated-vm
+    const fn = new Function('sandbox', 'return ' + wrappedCode)
+    const pluginInit = fn(sandbox)
+    await pluginInit(sandbox)
+
+    // Register all functions found in sandbox as handlers
+    for (const toolName of toolNames) {
+      const fn = sandbox[toolName]
+      if (typeof fn === 'function') {
+        loaded.handlers.set(toolName, fn)
+      } else {
+        console.warn(`[PluginEngine] Tool '${toolName}' not found in plugin ${loaded.id}`)
+      }
+    }
 
   } catch (err) {
     console.error(`[PluginEngine] Error loading builtin plugin ${loaded.id}:`, err)

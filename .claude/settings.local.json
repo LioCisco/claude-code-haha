@@ -54,7 +54,16 @@
       "Bash(mysql:*)",
       "Bash(npx vite:*)",
       "WebFetch(domain:claude.com)",
-      "WebSearch"
+      "WebSearch",
+      "Bash(brew services:*)",
+      "Bash(claude plugin:*)",
+      "Read(//Users/ciscomario/.claude/plugins/**)",
+      "Read(//Users/ciscomario/.claude/**)",
+      "Bash(kill %1)",
+      "Bash(timeout 30 sh -c 'bun run build 2>&1')",
+      "Bash(sed -n '716,740p' /Users/ciscomario/Desktop/projects/kane/claude-code-haha/web-ui/src/pages/Chat.tsx)",
+      "Bash(sed -n '347,360p' /Users/ciscomario/Desktop/projects/kane/claude-code-haha/web-ui/src/pages/Chat.tsx)",
+      "Bash(sed -n '638,665p' /Users/ciscomario/Desktop/projects/kane/claude-code-haha/web-ui/src/pages/Chat.tsx)"
     ]
   }
 }

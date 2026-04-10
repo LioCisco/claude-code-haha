@@ -3,6 +3,220 @@ import { execute, queryOne } from './index'
 // 示例系统插件
 const systemPlugins = [
   {
+    id: 'plugin-superpowers',
+    name: 'Superpowers 增强套件',
+    description: '为 AI 助手提供高级能力：计划制定、代码审查、调试、TDD、Git 工作流等',
+    version: '1.0.0',
+    author: 'Kane Work',
+    icon: 'Zap',
+    category: 'ai',
+    type: 'builtin',
+    status: 'active',
+    is_system: true,
+    is_enabled: true,
+    manifest: {
+      tools: [
+        {
+          name: 'brainstorm',
+          description: '在开始任何创造性工作前调用，探索用户需求、设计选项和实施策略。输入：{ task: string, context?: string }',
+          input_schema: {
+            type: 'object',
+            properties: {
+              task: { type: 'string', description: '用户请求的任务描述' },
+              context: { type: 'string', description: '额外的上下文信息' }
+            },
+            required: ['task']
+          }
+        },
+        {
+          name: 'write_plan',
+          description: '为复杂任务制定实施计划。输入：{ task: string, requirements: string[], constraints?: string[] }',
+          input_schema: {
+            type: 'object',
+            properties: {
+              task: { type: 'string', description: '任务描述' },
+              requirements: { type: 'array', items: { type: 'string' }, description: '需求列表' },
+              constraints: { type: 'array', items: { type: 'string' }, description: '约束条件' }
+            },
+            required: ['task', 'requirements']
+          }
+        },
+        {
+          name: 'debug_systematically',
+          description: '系统性调试问题。输入：{ problem: string, symptoms: string[], attempted_fixes?: string[] }',
+          input_schema: {
+            type: 'object',
+            properties: {
+              problem: { type: 'string', description: '问题描述' },
+              symptoms: { type: 'array', items: { type: 'string' }, description: '症状列表' },
+              attempted_fixes: { type: 'array', items: { type: 'string' }, description: '已尝试的修复方法' }
+            },
+            required: ['problem', 'symptoms']
+          }
+        },
+        {
+          name: 'code_review',
+          description: '审查代码并提供反馈。输入：{ code: string, file_path: string, review_focus?: string[] }',
+          input_schema: {
+            type: 'object',
+            properties: {
+              code: { type: 'string', description: '代码内容' },
+              file_path: { type: 'string', description: '文件路径' },
+              review_focus: { type: 'array', items: { type: 'string' }, description: '审查重点：security, performance, readability, maintainability' }
+            },
+            required: ['code', 'file_path']
+          }
+        },
+        {
+          name: 'tdd_cycle',
+          description: '执行测试驱动开发周期。输入：{ feature: string, test_cases: string[] }',
+          input_schema: {
+            type: 'object',
+            properties: {
+              feature: { type: 'string', description: '功能描述' },
+              test_cases: { type: 'array', items: { type: 'string' }, description: '测试用例列表' }
+            },
+            required: ['feature', 'test_cases']
+          }
+        },
+        {
+          name: 'git_worktree',
+          description: '为功能开发创建 Git 工作流隔离环境。输入：{ feature_name: string, base_branch?: string }',
+          input_schema: {
+            type: 'object',
+            properties: {
+              feature_name: { type: 'string', description: '功能名称' },
+              base_branch: { type: 'string', description: '基于的分支，默认为 main' }
+            },
+            required: ['feature_name']
+          }
+        },
+        {
+          name: 'verify_before_complete',
+          description: '在完成前验证工作。输入：{ task: string, verification_steps: string[] }',
+          input_schema: {
+            type: 'object',
+            properties: {
+              task: { type: 'string', description: '完成的任务描述' },
+              verification_steps: { type: 'array', items: { type: 'string' }, description: '验证步骤列表' }
+            },
+            required: ['task', 'verification_steps']
+          }
+        }
+      ],
+      permissions: ['bash', 'read_file', 'write_file']
+    },
+    code: `// Superpowers 插件 - 提供高级 AI 辅助能力
+
+async function brainstorm({ task, context = '' }) {
+  // 返回思考框架和建议
+  return {
+    approach: '建议采用以下步骤：\\n1. 分析需求\\n2. 探索可行方案\\n3. 评估利弊\\n4. 制定实施计划',
+    considerations: [
+      '考虑用户需求的核心痛点',
+      '评估技术可行性和复杂度',
+      '权衡短期和长期维护成本'
+    ],
+    next_steps: ['澄清需求细节', '研究现有方案', '设计原型']
+  };
+}
+
+async function write_plan({ task, requirements, constraints = [] }) {
+  return {
+    plan: {
+      phases: [
+        { name: '调研分析', tasks: ['需求澄清', '技术调研'] },
+        { name: '设计阶段', tasks: ['架构设计', '接口定义'] },
+        { name: '实施阶段', tasks: ['核心功能', '边界处理'] },
+        { name: '验证阶段', tasks: ['测试验证', '代码审查'] }
+      ]
+    },
+    estimated_effort: '根据复杂度评估',
+    risks: constraints.map(c => ({ risk: c, mitigation: '待定' }))
+  };
+}
+
+async function debug_systematically({ problem, symptoms, attempted_fixes = [] }) {
+  return {
+    diagnostic_steps: [
+      '1. 复现问题',
+      '2. 收集日志和错误信息',
+      '3. 隔离可能的原因',
+      '4. 提出假设并验证',
+      '5. 实施修复并验证'
+    ],
+    hypotheses: symptoms.map(s => ({ symptom: s, possible_causes: ['原因A', '原因B'] })),
+    tools_needed: ['日志分析', '调试器', '监控工具']
+  };
+}
+
+async function code_review({ code, file_path, review_focus = ['readability', 'maintainability'] }) {
+  const issues = [];
+
+  // 基础检查
+  if (code.length > 500 && !code.includes('\\n\\n')) {
+    issues.push({ type: 'style', message: '建议添加空行分隔逻辑块' });
+  }
+  if (!code.includes('//') && code.length > 200) {
+    issues.push({ type: 'documentation', message: '考虑添加注释说明复杂逻辑' });
+  }
+
+  return {
+    file: file_path,
+    summary: '代码审查完成',
+    issues,
+    suggestions: review_focus.map(focus => ({ focus, suggestion: '具体建议...' })),
+    approval: issues.length === 0 ? 'approved' : 'needs_revision'
+  };
+}
+
+async function tdd_cycle({ feature, test_cases }) {
+  return {
+    cycle: {
+      red: '编写失败的测试：' + test_cases[0],
+      green: '实现最小代码使测试通过',
+      refactor: '重构代码，保持测试通过'
+    },
+    test_plan: test_cases.map(tc => ({ test: tc, status: 'pending' })),
+    guidelines: [
+      '先写测试，后写实现',
+      '每个测试只验证一个概念',
+      '保持测试简单可读'
+    ]
+  };
+}
+
+async function git_worktree({ feature_name, base_branch = 'main' }) {
+  const worktree_name = feature_name.toLowerCase().replace(/\\s+/g, '-').replace(/[^a-z0-9-]/g, '');
+  return {
+    commands: [
+      \`git worktree add .claude/worktrees/\${worktree_name} \${base_branch}\`,
+      \`cd .claude/worktrees/\${worktree_name}\`,
+      \`git checkout -b feature/\${worktree_name}\`
+    ],
+    path: \`.claude/worktrees/\${worktree_name}\`,
+    cleanup: \`git worktree remove .claude/worktrees/\${worktree_name}\`
+  };
+}
+
+async function verify_before_complete({ task, verification_steps }) {
+  return {
+    verification_checklist: verification_steps.map((step, i) => ({
+      step: i + 1,
+      description: step,
+      status: 'pending',
+      command: '运行验证命令...'
+    })),
+    completion_criteria: [
+      '所有验证步骤通过',
+      '代码审查完成',
+      '文档已更新'
+    ]
+  };
+}`
+  },
+
+  {
     id: 'plugin-web-search',
     name: '网页搜索增强',
     description: '增强版网页搜索，支持多搜索引擎和结果过滤',
@@ -316,6 +530,13 @@ export async function seedDatabase(): Promise<void> {
           ]
         )
         console.log(`[Seed] Created system plugin: ${plugin.name}`)
+      } else {
+        // Update code for existing plugins to ensure fixes are applied
+        await execute(
+          `UPDATE plugins SET code = ? WHERE id = ?`,
+          [plugin.code, plugin.id]
+        )
+        console.log(`[Seed] Updated system plugin: ${plugin.name}`)
       }
     }
 

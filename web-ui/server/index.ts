@@ -21,7 +21,7 @@ import { marketplaceRoutes } from './routes/marketplace'
 import { initializePluginEngine, loadActivePlugins } from './lib/pluginEngine'
 import { chatWithAI, getAgentSystemPrompt } from './lib/ai'
 import { ClaudeSession, type ChatEvent } from './lib/claudeSession'
-import { initDatabase, getSessionMessages, createSession, checkDatabaseHealth, getUserSessions, updateSessionTitle, softDeleteSession } from './db'
+import { initDatabase, getSessionMessages, getSession, createSession, checkDatabaseHealth, getUserSessions, updateSessionTitle, softDeleteSession } from './db'
 
 // Map ws.id -> ClaudeSession
 const sessions = new Map<string, ClaudeSession>()
@@ -263,8 +263,8 @@ const app = new Elysia()
       // Create session in database if not exists
       if (DB_ENABLED) {
         try {
-          const existingSession = await getSessionMessages(sessionId, 1)
-          if (existingSession.length === 0) {
+          const existingSession = await getSession(sessionId)
+          if (!existingSession) {
             await createSession(sessionId, {
               userId,
               title: `会话 ${new Date().toLocaleString('zh-CN')}`,
