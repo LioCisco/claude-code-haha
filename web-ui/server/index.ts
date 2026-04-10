@@ -19,6 +19,7 @@ import { memoryRoutes } from './routes/memories'
 import { pluginRoutes } from './routes/plugins'
 import { marketplaceRoutes } from './routes/marketplace'
 import { initializePluginEngine, loadActivePlugins } from './lib/pluginEngine'
+import { registerBuiltinSkills, loadSkillsFromDatabase } from './lib/builtinSkills'
 import { chatWithAI, getAgentSystemPrompt } from './lib/ai'
 import { ClaudeSession, type ChatEvent } from './lib/claudeSession'
 import { initDatabase, getSessionMessages, getSession, createSession, checkDatabaseHealth, getUserSessions, updateSessionTitle, softDeleteSession } from './db'
@@ -41,6 +42,12 @@ try {
   // Initialize plugin engine after database
   await initializePluginEngine()
   console.log('[Server] Plugin engine initialized successfully')
+
+  // Register builtin skills
+  registerBuiltinSkills()
+
+  // Load skills from database
+  await loadSkillsFromDatabase()
 } catch (err) {
   console.error('[Server] Database initialization failed:', err)
   console.log('[Server] Running without database persistence')
