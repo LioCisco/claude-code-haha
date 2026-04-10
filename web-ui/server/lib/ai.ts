@@ -1,5 +1,6 @@
 import Anthropic from '@anthropic-ai/sdk'
 import { queryOne } from '../db'
+import { skillRegistry } from './skillTool'
 
 const apiKey = process.env.ANTHROPIC_AUTH_TOKEN || process.env.ANTHROPIC_API_KEY
 const baseURL = process.env.ANTHROPIC_BASE_URL
@@ -35,26 +36,61 @@ export const agentSystemPrompts: Record<string, string> = {
 }
 
 // Get agent system prompt from database or fallback to defaults
+export function buildSystemPromptWithSkills(basePrompt: string): string {
+  const skills = skillRegistry.getUserInvocable()
+
+  if (skills.length === 0) {
+    return basePrompt
+  }
+
+  const skillList = skills
+    .map(s => `- ${s.name}: ${s.description}${s.whenToUse ? ` - ${s.whenToUse}` : ''}`)
+    .join('\n')
+
+  const skillSection = `
+## 可用 Skill 工具
+
+你可以使用以下 Skill 来扩展能力。当用户的请求匹配某个 Skill 时，**必须**使用 \`skill\` 工具调用它：
+
+${skillList}
+
+## Skill 调用规则
+
+当用户的请求匹配某个 Skill 时：
+1. **这是强制要求**：先调用 \`skill\` 工具，再生成其他回复
+2. 调用格式：\`skill: "skill-name", args: "arguments"\`
+3. 如果对话中已经出现了 Skill 的执行结果，不要再调用
+4. 不要为内置 CLI 命令（如 /help, /clear）调用 Skill
+
+示例用户请求和对应的 Skill 调用：
+- "帮我检查库存" → 调用 skill: "inventory-check"
+- "生成一条小红书文案" → 调用 skill: "social-post", args: "小红书 夏季护肤"
+- "提交代码" → 调用 skill: "commit"
+`
+
+  return `${basePrompt}\n\n${skillSection}`
+}
+
 export async function getAgentSystemPrompt(agentId?: string): Promise<string> {
+  let basePrompt: string
+
   if (!agentId) {
-    return agentSystemPrompts.default
-  }
-
-  try {
-    const agent = await queryOne<any>(
-      'SELECT system_prompt FROM agents WHERE id = ? AND is_active = TRUE',
-      [agentId]
-    )
-
-    if (agent?.system_prompt) {
-      return agent.system_prompt
+    basePrompt = agentSystemPrompts.default
+  } else {
+    try {
+      const agent = await queryOne<any>(
+        'SELECT system_prompt FROM agents WHERE id = ? AND is_active = TRUE',
+        [agentId]
+      )
+      basePrompt = agent?.system_prompt || agentSystemPrompts[agentId] || agentSystemPrompts.default
+    } catch (err) {
+      console.warn('[AI] Failed to fetch agent prompt from DB:', err)
+      basePrompt = agentSystemPrompts[agentId] || agentSystemPrompts.default
     }
-  } catch (err) {
-    console.warn('[AI] Failed to fetch agent prompt from DB:', err)
   }
 
-  // Fallback to default prompts
-  return agentSystemPrompts[agentId] || agentSystemPrompts.default
+  // Add Skill information to system prompt
+  return buildSystemPromptWithSkills(basePrompt)
 }
 
 // Get full agent configuration from database
